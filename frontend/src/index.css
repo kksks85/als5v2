@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --ink: #0f1419;
+  --text: #384347;
+  --muted: #6b7a7e;
+  --subtle: #98a5a9;
+  --line: #e2e8ea;
+  --line-light: #eef2f3;
+  --paper: #ffffff;
+  --canvas: #f0f4f5;
+  --canvas-deep: #e4eaec;
+  --green: #0d6355;
+  --green-hover: #0a4f44;
+  --green-light: #e8f5f0;
+  --green-muted: #b4d9cf;
+  --teal: #0a7a6e;
+  --amber: #c27a18;
+  --amber-light: #fef3e0;
+  --red: #c43d38;
+  --red-light: #fde8e7;
+  --blue: #2774a4;
+  --blue-light: #e6f0f8;
+  --sidebar-bg: #0e2a28;
+  --sidebar-hover: #183d3a;
+  --sidebar-active: #1d4945;
+  --sidebar-text: #9bb5b1;
+  --sidebar-text-bright: #e0ece9;
+}
+
+html {
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--canvas);
+  min-height: 100vh;
+}
+
+#root { min-height: 100vh; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+a { color: inherit; text-decoration: none; }
+img, svg { display: block; }
+h1, h2, h3, h4, h5, h6 { color: var(--ink); font-weight: 700; line-height: 1.25; }
+
+input:focus, button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+::selection { background: var(--green-light); color: var(--green); }
