@@ -30,31 +30,64 @@ const routeCardAssemblies = [
   { routeCard: 'AIRCRAFT ASSEMBLY WPROP', description: 'AIRCRAFT ASSEMBLY WITH PROPELLERS', partNumber: '24492779', sapPartNumber: '736282419201543', material: 'AIRCRAFT XXX ASSEMBLY', quantity: '1', uom: 'EA', subsystem: 'FINAL ASSEMBLY' },
 ]
 
-const routeCardOperations = ['Incoming inspection', 'Kitting', 'Pre-assembly', 'Alignment', 'Harness routing', 'Bonding', 'Fastener installation', 'Electrical continuity', 'Functional test', 'Quality inspection', 'Environmental screening', 'Final acceptance', 'Pack-out', 'Dispatch release', 'Service preparation', 'Configuration verification', 'Repair assessment', 'Rework approval', 'Calibration', 'Documentation release']
-const subsystemVariants = ['AIRFRAME', 'PROPULSION', 'AVIONICS', 'FLIGHT CONTROL', 'COMMUNICATION', 'PAYLOAD', 'POWER', 'GROUND CONTROL', 'LAUNCH SYSTEM', 'FINAL ASSEMBLY']
+const subsystemDefinitions = [
+  { name: 'AIRFRAME', code: 'AIR', recordsPerUnit: 160 },
+  { name: 'HARNESS', code: 'HAR', recordsPerUnit: 80 },
+  { name: 'PROPULSION', code: 'PRO', recordsPerUnit: 100 },
+  { name: 'DATALINK', code: 'DAT', recordsPerUnit: 60 },
+  { name: 'AVIONICS & HARWARE', code: 'AVH', recordsPerUnit: 120 },
+  { name: 'GIMBAL', code: 'GIM', recordsPerUnit: 60 },
+  { name: 'CONSUMABLES', code: 'CON', recordsPerUnit: 100 },
+]
+const routeCardLabels = {
+  FUSELAGE: 'Fuselage',
+  'CENTER WING': 'Center Wing',
+  'BOOM LH': 'Left Boom',
+  'BOOM RH': 'Right Boom',
+  'LH SIDE WING': 'Left Side Wing',
+  'RH SIDE WING': 'Right Side Wing',
+  'LH ENPENNAGE': 'Left Empennage',
+  'RH ENPENNAGE': 'Right Empennage',
+  'AIRCRAFT ASSEMBLY': 'Aircraft Assembly',
+  'AIRCRAFT ASSEMBLY WPROP': 'Aircraft Assembly Propeller',
+}
+const componentNames = {
+  AIRFRAME: ['Carbon Fiber Panel', 'Structural Rib', 'Mounting Bracket', 'Access Cover', 'Bonded Fastener'],
+  HARNESS: ['Wiring Harness', 'Connector Assembly', 'Cable Loom', 'Junction Connector', 'Grounding Lead'],
+  PROPULSION: ['Motor Assembly', 'Propeller Hub', 'Electronic Speed Controller', 'Motor Mount', 'Propulsion Cable'],
+  DATALINK: ['Radio Transceiver', 'Antenna Assembly', 'RF Cable', 'Telemetry Modem', 'Data Link Connector'],
+  'AVIONICS & HARWARE': ['Flight Controller', 'Navigation Module', 'Power Distribution Board', 'Inertial Sensor', 'Avionics Mount'],
+  GIMBAL: ['Gimbal Frame', 'Payload Camera', 'Gimbal Motor', 'Stabilization Controller', 'Payload Cable'],
+  CONSUMABLES: ['Fastener Kit', 'Bonding Adhesive', 'Protective Sealant', 'Thermal Interface Pad', 'Cable Tie Set'],
+}
+const componentDescription = (routeCard, subsystem, componentIndex) => `${routeCardLabels[routeCard]} ${componentNames[subsystem][componentIndex % componentNames[subsystem].length]}`
 const recordsPerUnit = 680
 
 export const seedProducts = Array.from({ length: 15 }, (_, unitIndex) => {
   const unitNumber = String(unitIndex + 1).padStart(3, '0')
-  return Array.from({ length: recordsPerUnit }, (_, recordIndex) => {
-    const assembly = routeCardAssemblies[recordIndex % routeCardAssemblies.length]
-    const operation = routeCardOperations[Math.floor(recordIndex / routeCardAssemblies.length) % routeCardOperations.length]
-    const subsystem = subsystemVariants[Math.floor(recordIndex / (routeCardAssemblies.length * 2)) % subsystemVariants.length]
-    const routeSequence = String(recordIndex + 1).padStart(3, '0')
-    return {
-      product_serial_number: `LM-${unitNumber}`,
-      product_category: 'Loitering Munition',
-      route_card_description: `${assembly.description} - ${operation}`,
-      part_number: `${assembly.partNumber}-${routeSequence}`,
-      sap_part_number: `${assembly.sapPartNumber}${routeSequence}`,
-      material_description: `${assembly.material} / ${subsystem}`,
-      batch_or_po_number: `LM-PO-2026-${unitNumber}-${String(Math.floor(recordIndex / 20) + 1).padStart(2, '0')}`,
-      material_serial_number: `LM-${unitNumber}-${subsystem.replace(/[^A-Z0-9]/g, '').slice(0, 5)}-${routeSequence}`,
-      weight_in_grams: '',
-      required_quantity: assembly.quantity,
-      unit_of_measurement: assembly.uom,
-      subsystems: subsystem,
-    }
+  let recordOffset = 0
+  return subsystemDefinitions.flatMap(({ name: subsystem, code, recordsPerUnit: subsystemRecordCount }) => {
+    const records = Array.from({ length: subsystemRecordCount }, (_, subsystemIndex) => {
+      const recordIndex = recordOffset + subsystemIndex
+      const assembly = routeCardAssemblies[recordIndex % routeCardAssemblies.length]
+      const routeSequence = String(recordIndex + 1).padStart(3, '0')
+      return {
+        product_serial_number: `LM-${unitNumber}`,
+        product_category: 'Loitering Munition',
+        route_card_description: assembly.routeCard,
+        part_number: `${assembly.partNumber}-${routeSequence}`,
+        sap_part_number: `${assembly.sapPartNumber}${routeSequence}`,
+        material_description: componentDescription(assembly.routeCard, subsystem, subsystemIndex),
+        batch_or_po_number: `LM-PO-2026-${unitNumber}-${String(Math.floor(recordIndex / 20) + 1).padStart(2, '0')}`,
+        material_serial_number: `LM-${unitNumber}-${code}-${routeSequence}`,
+        weight_in_grams: '',
+        required_quantity: assembly.quantity,
+        unit_of_measurement: assembly.uom,
+        subsystems: subsystem,
+      }
+    })
+    recordOffset += subsystemRecordCount
+    return records
   })
 }).flat()
 
@@ -215,7 +248,7 @@ export default function ProductMasterPage({ products, setProducts }) {
 }
 
 function ProductRecordView({ product, onBack, onEdit }) {
-  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product master</button><h1>{product.material_serial_number}</h1><p>{product.material_description || 'Product material record'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button><button className="incident-submit-button" onClick={onEdit}>Edit product</button></div></header><section className="product-record-sheet">{productColumns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{product[key] || '--'}</strong></div>)}</section></section>
+  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product master</button><h1>{product.material_serial_number}</h1><p>{product.material_description || 'Product material record'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button><button className="incident-submit-button" onClick={onEdit}>Edit product</button></div></header><section className="product-record-sheet">{productColumns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{product[key] || '--'}</strong></div>)}</section>{(product.productJournal || []).length > 0 && <section className="product-journal"><h2>Product journal</h2><ol>{[...product.productJournal].reverse().map((entry) => <li key={entry.id}><strong>{entry.field}</strong><span><s>{entry.previous}</s> to <b>{entry.next}</b></span><small>{entry.incidentNumber} · {entry.updatedBy} · {new Date(entry.updatedAt).toLocaleString('en-GB')}</small></li>)}</ol></section>}</section>
 }
 
 function ProductRecordEditor({ product, onBack, onSave }) {

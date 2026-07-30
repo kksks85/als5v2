@@ -1,4 +1,7 @@
 const normalized = (value) => String(value || '').trim().toLowerCase()
+const normalizedProductCategory = (value) => normalized(value).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
+
+export const productCategoryMatches = (productLabel, category) => normalizedProductCategory(productLabel) === normalizedProductCategory(category)
 
 export const categoryKey = (category) => normalized(category).replace(/[^a-z0-9]+/g, '-')
 
@@ -38,11 +41,11 @@ export const reconcileProductAssets = (products, contracts, existingAssets = [])
       const existing = existingById.get(product.id)
       if (existing) {
         const contract = contracts.find((candidate) => candidate.number === existing.contractNumber)
-        const allocation = allocations.find((candidate) => candidate.contractNumber === existing.contractNumber && normalized(candidate.category) === normalized(product.category))
+        const allocation = allocations.find((candidate) => candidate.contractNumber === existing.contractNumber && productCategoryMatches(candidate.category, product.category))
         if (allocation?.remaining > 0) allocation.remaining -= 1
-        return { ...product, ...existing, id: product.id, serialNumber: product.serialNumber, category: product.category, customer: existing.customer || contract?.customer || '', warranty: existing.warranty || contract?.warranty || '', warrantyExpiry: existing.warrantyExpiry || contract?.expiryDate || '', deliveredOn: existing.deliveredOn || contract?.jriDate || '' }
+        return { ...product, ...existing, id: product.id, serialNumber: product.serialNumber, category: product.category, customer: contract?.customer || existing.customer || '', warranty: contract?.warranty || existing.warranty || '', warrantyExpiry: contract?.expiryDate || existing.warrantyExpiry || '', deliveredOn: contract?.jriDate || existing.deliveredOn || '' }
       }
-      const allocation = allocations.find((candidate) => normalized(candidate.category) === normalized(product.category) && candidate.remaining > 0)
+      const allocation = allocations.find((candidate) => productCategoryMatches(candidate.category, product.category) && candidate.remaining > 0)
       if (allocation) allocation.remaining -= 1
       return {
         ...product,

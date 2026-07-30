@@ -47,6 +47,22 @@ class AssignmentGroupRecord(RecordMixin, Base):
     __tablename__ = "assignment_groups"
 
 
+class NotificationRecord(RecordMixin, Base):
+    __tablename__ = "notifications"
+
+
+class AuditLogRecord(RecordMixin, Base):
+    __tablename__ = "audit_logs"
+
+
+class RepairExecutionRecord(RecordMixin, Base):
+    __tablename__ = "repair_executions"
+
+
+class ProcessConfigurationRecord(RecordMixin, Base):
+    __tablename__ = "process_configurations"
+
+
 class EntraConfiguration(Base):
     __tablename__ = "entra_configuration"
 

@@ -25,7 +25,7 @@ const palettes = [
   { key: 'signal', label: 'Signal', colors: ['#167d68', '#6cad5c', '#d4a72c', '#c84c4c'] },
 ]
 
-export default function ReportingPage({ user, data, reports = [], onSaveReport, onShareReport, initialReportId }) {
+export default function ReportingPage({ user, data, reports = [], onSaveReport, onShareReport, initialReportId, initialReportDefinition }) {
   const allowedCatalog = useMemo(() => [...reportCatalog, ...getProductCategoryReportCatalog(data.productAssets)]
     .filter((table) => table.roles.includes(user.role)), [data.productAssets, user.role])
   const [view, setView] = useState('list')
@@ -69,6 +69,10 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
   }
   // Auto-open a report when drilled into from the dashboard
   useEffect(() => {
+    if (initialReportDefinition) {
+      openReport(initialReportDefinition)
+      return
+    }
     if (!initialReportId) return
     const target = reports.find((r) => r.id === initialReportId)
     if (target) openReport(target)

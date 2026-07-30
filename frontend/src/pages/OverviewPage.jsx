@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Activity, AlertTriangle, BarChart3, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, GripVertical, LayoutDashboard, Plus, Table2, TrendingUp, X } from 'lucide-react'
+import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, GripVertical, LayoutDashboard, Plus, Send, Sparkles, Table2, TrendingUp, X } from 'lucide-react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
-import { createReportRows, runReportDefinition } from '../data/reportEngine'
+import { createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog, runReportDefinition } from '../data/reportEngine'
 
 const ReactGridLayout = WidthProvider(GridLayout)
 const palette = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#6366f1', '#0d9488', '#ca8a04', '#be185d']
 
-export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenIncidents }) {
+export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords }) {
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [nlpPanel, setNlpPanel] = useState(null)
   const rowsBySource = useMemo(() => {
     const rows = createReportRows(data)
     if (!selectedCustomer || selectedCustomer === 'All customers') return rows
@@ -37,6 +38,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     <header className="dashboard-header">
       <div><h1>Dashboard</h1>{selectedCustomer !== 'All customers' && <span className="dash-filter-badge">{selectedCustomer}</span>}</div>
       <div className="dashboard-actions">
+        <button className="compact-button secondary" onClick={() => nlpPanel?.scrollIntoView({ block: 'start' })}><Bot size={14} /> NLP reporting</button>
         <button className="compact-button secondary" onClick={() => onNavigate('Reporting')}><BarChart3 size={14} /> Reports</button>
         <button className="compact-button primary" onClick={() => setPickerOpen(true)}><Plus size={14} /> Add tile</button>
       </div>
@@ -67,16 +69,42 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
               <button className="icon-button subtle" onClick={() => onRemoveReport(report.id)} aria-label={`Remove ${report.name}`} title="Remove"><X size={14} /></button>
             </div>
           </header>
-          <DashboardReport report={report} result={result} onOpen={() => onOpenReport(report.id)} />
+          <DashboardReport report={report} result={result} onOpen={() => onOpenReport(report.id)} onOpenGroup={(group) => onOpenRecords?.({
+            source: report.source,
+            label: group.label,
+            recordIds: result.rows.filter((row) => Object.entries(group.values).every(([field, value]) => String(row[field] || 'Unspecified') === value)).map((row) => row.Number || row['Serial number']).filter(Boolean),
+          })} />
         </div> })}
       </ReactGridLayout>
     </div>}
+
+    <NlpReportingPanel user={user} rowsBySource={rowsBySource} productAssets={data.productAssets} onOpenReport={onOpenNlpReport} panelRef={setNlpPanel} />
 
     {pickerOpen && <div className="report-dialog-backdrop"><section className="dashboard-picker" role="dialog" aria-modal="true" aria-label="Add reports to dashboard"><header><div><h2>Add a report</h2><p>Your reports and reports shared with you</p></div><button className="icon-button subtle" onClick={() => setPickerOpen(false)} aria-label="Close"><X size={17} /></button></header><div className="dashboard-picker-list">{availableReports.map((report) => <button key={report.id} onClick={() => { onAddReport(report.id); setPickerOpen(false) }}><span><BarChart3 size={17} /></span><div><strong>{report.name}</strong><small>{report.source} · {report.createdBy === user.email ? 'Created by you' : `Shared with ${report.sharedWith.join(', ')}`}</small></div><Plus size={16} /></button>)}{!availableReports.length && <div className="dashboard-picker-empty"><Table2 size={22} /><strong>No reports available</strong><p>Save a report in Reporting or ask a colleague to share one with you.</p><button className="compact-button primary" onClick={() => { setPickerOpen(false); onNavigate('Reporting') }}>Open reporting</button></div>}</div></section></div>}
   </section>
 }
 
-function DashboardReport({ report, result, onOpen }) {
+function NlpReportingPanel({ user, rowsBySource, productAssets, onOpenReport, panelRef }) {
+  const allowedCatalog = useMemo(() => [...reportCatalog, ...getProductCategoryReportCatalog(productAssets)]
+    .filter((table) => table.roles.includes(user.role)), [productAssets, user.role])
+  const [prompt, setPrompt] = useState('')
+  const [generated, setGenerated] = useState(null)
+  const runPrompt = (event) => {
+    event.preventDefault()
+    if (!prompt.trim()) return
+    const nextGenerated = parseReportPrompt(prompt, allowedCatalog)
+    setGenerated({ ...nextGenerated, result: runReportDefinition(nextGenerated.definition, rowsBySource) })
+  }
+
+  return <section ref={panelRef} className="dashboard-nlp" aria-labelledby="dashboard-nlp-title">
+    <header><span><Bot size={18} /></span><div><p>Natural language reporting</p><h2 id="dashboard-nlp-title">Ask about your operational data</h2><small>Generate a report from a plain-language question without changing your dashboard tiles.</small></div></header>
+    <form onSubmit={runPrompt}><input aria-label="Reporting question" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="e.g. Show open critical incidents by customer" /><button type="submit" className="compact-button primary"><Send size={14} /> Generate</button></form>
+    <div className="dashboard-nlp-examples"><span>Try:</span>{['Open incidents by customer', 'Critical incidents by assignment group', 'Contracts by customer'].map((example) => <button key={example} type="button" onClick={() => setPrompt(example)}>{example}</button>)}</div>
+    {generated && <div className="dashboard-nlp-result"><div><span><Sparkles size={15} /></span><section><strong>{generated.definition.name}</strong><p>{generated.explanation}</p></section></div><aside><b>{generated.result.rows.length}</b><small>matching records</small></aside>{generated.result.groups.length > 0 && <ul>{generated.result.groups.slice(0, 4).map((group) => <li key={group.label}><span>{group.label}</span><b>{group.value}</b></li>)}</ul>}<button type="button" className="compact-button secondary" onClick={() => onOpenReport?.(generated.definition)}><ExternalLink size={14} /> Open in Reporting</button></div>}
+  </section>
+}
+
+function DashboardReport({ report, result, onOpen, onOpenGroup }) {
   const { rows, groups } = result
   const fields = report.selectedFields?.length ? report.selectedFields : report.fields || Object.keys(rows[0] || {}).slice(0, 5)
   const [page, setPage] = useState(1)
@@ -95,5 +123,5 @@ function DashboardReport({ report, result, onOpen }) {
   const visibleGroups = groups.slice(0, 20)
   const maximum = Math.max(1, ...visibleGroups.map((group) => group.value))
   if (!groups.length) return <div className="dashboard-report-empty dash-clickable" onClick={onOpen}><BarChart3 size={18} /><p>No data – click to open report</p></div>
-  return <div className="dashboard-mini-chart dash-clickable" onClick={onOpen}><div className="dashboard-bars">{visibleGroups.map(({ label, value }, index) => <div key={label} title={`${label}: ${value}`}><small title={label}>{label}</small><span><i style={{ width: `${value / maximum * 100}%`, background: palette[index % palette.length] }} /></span><b>{value}</b></div>)}</div></div>
+  return <div className="dashboard-mini-chart"><div className="dashboard-bars">{visibleGroups.map((group, index) => <button type="button" className="dashboard-bar-drill" key={group.label} title={`Open ${group.value} records for ${group.label}`} onClick={() => onOpenGroup(group)}><small title={group.label}>{group.label}</small><span><i style={{ width: `${group.value / maximum * 100}%`, background: palette[index % palette.length] }} /></span><b>{group.value}</b></button>)}</div></div>
 }

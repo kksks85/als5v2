@@ -132,9 +132,10 @@ export const runReportDefinition = (definition, rowsBySource) => {
   const groupBy = definition.groupBy?.filter(Boolean) || []
   const groups = groupBy.length ? Object.entries(rows.reduce((result, row) => {
     const label = groupBy.map((field) => String(row[field] || 'Unspecified')).join(' / ')
-    result[label] = (result[label] || 0) + 1
+    if (!result[label]) result[label] = { value: 0, values: Object.fromEntries(groupBy.map((field) => [field, String(row[field] || 'Unspecified')])) }
+    result[label].value += 1
     return result
-  }, {})).map(([label, value]) => ({ label, value })).sort((left, right) => right.value - left.value) : []
+  }, {})).map(([label, group]) => ({ label, ...group })).sort((left, right) => right.value - left.value) : []
   return { rows, groups }
 }
 

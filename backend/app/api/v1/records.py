@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, ContractRecord, CustomerRecord, IncidentRecord, KnowledgeDocumentRecord, ProductAssetRecord, ProductRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, ContractRecord, CustomerRecord, IncidentRecord, KnowledgeDocumentRecord, NotificationRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -21,6 +21,10 @@ ALLOWED_RESOURCES = {
     "knowledge_documents",
     "users",
     "assignment_groups",
+    "notifications",
+    "audit_logs",
+    "repair_executions",
+    "process_configurations",
 }
 RESOURCE_MODELS = {
     "customers": CustomerRecord,
@@ -31,6 +35,10 @@ RESOURCE_MODELS = {
     "knowledge_documents": KnowledgeDocumentRecord,
     "users": UserRecord,
     "assignment_groups": AssignmentGroupRecord,
+    "notifications": NotificationRecord,
+    "audit_logs": AuditLogRecord,
+    "repair_executions": RepairExecutionRecord,
+    "process_configurations": ProcessConfigurationRecord,
 }
 
 
@@ -99,8 +107,19 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
         return
     now = datetime.now(UTC)
     model = RESOURCE_MODELS[resource]
+    def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        if resource != "incidents":
+            return payload
+        normalized = dict(payload)
+        if not normalized.get("repairExecution"):
+            normalized["repairExecution"] = "Incident Registration"
+        if not normalized.get("status"):
+            normalized["status"] = "Registered" if normalized.get("stage") in {None, "", "Triage"} else normalized["stage"]
+        if normalized.get("stage") in {None, "", "Triage"}:
+            normalized["stage"] = normalized["status"]
+        return normalized
     statement = insert(model).values([
-        {"record_id": record.record_id, "payload": record.payload, "updated_at": now}
+        {"record_id": record.record_id, "payload": normalize_payload(record.payload), "updated_at": now}
         for record in records
     ])
     statement = statement.on_conflict_do_update(

@@ -2,6 +2,29 @@ import { useState, useMemo } from 'react'
 import { ArrowLeft, Download, Eye, Edit2, Trash2, Plus, Search } from 'lucide-react'
 
 const formatDate = (date) => date ? new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
+const deliverableProducts = ['Loitering Munition (LM)', 'Mission Control Station (MCS)', 'Ground Data Terminal (GDT)', 'MAST', 'Simulator', 'Tactical Mobility Vehicle (TMV)', 'Rapid Deployment Vehicle (RDV)', 'Batteries', 'Warhead', 'MRLS', 'Tools', 'SMT / STE', 'Ground Support Equipment (GSE)']
+const warrantyExpiryFromJri = (jriDate) => {
+  if (!jriDate) return ''
+  const [year, month, day] = jriDate.split('-').map(Number)
+  return new Date(Date.UTC(year + 2, month - 1, day)).toISOString().slice(0, 10)
+}
+const today = () => new Date().toISOString().slice(0, 10)
+const isWarrantyExpired = (expiryDate) => Boolean(expiryDate) && expiryDate < today()
+const subcontractStatus = (subcontract) => {
+  if (!subcontract.validFrom || !subcontract.validTo) return 'Incomplete'
+  if (subcontract.validFrom > today()) return 'Upcoming'
+  return subcontract.validTo < today() ? 'Expired' : 'Active'
+}
+export const normalizeWarrantyStatus = (contract) => {
+  const subcontracts = Array.isArray(contract.subcontracts) ? contract.subcontracts : []
+  const activeCoverage = [...new Set(subcontracts.filter((subcontract) => subcontractStatus(subcontract) === 'Active').map((subcontract) => subcontract.type))]
+  return {
+    ...contract,
+    subcontracts,
+    warranty: contract.expiryDate ? (isWarrantyExpired(contract.expiryDate) ? 'Warranty Expired' : 'Active - Under Warranty') : '',
+    coverage: subcontracts.length ? activeCoverage : (contract.coverage || []),
+  }
+}
 
 export const initialContracts = [
   // Active - Under Warranty
@@ -304,13 +327,11 @@ const emptyForm = {
   expiryDate: '',
   warranty: '',
   coverage: [],
+  subcontracts: [],
   status: 'Active',
-  minorService: '',
-  majorService: '',
+  system: '',
   manuals: '',
   entryDate: '',
-  minorSchedule: '',
-  majorSchedule: '',
   incidentPrefix: '',
   warrantyIncluded: false,
   maintenance: false,
@@ -331,7 +352,7 @@ export default function ContractsPage({ contracts, setContracts }) {
   const [columnWidths, setColumnWidths] = useState(() => Object.fromEntries(columns.map(({ key, width }) => [key, width])))
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  const filtered = useMemo(() => contracts.filter(c => !search || c.number.toLowerCase().includes(search.toLowerCase()) || c.customer.toLowerCase().includes(search.toLowerCase())), [contracts, search])
+  const filtered = useMemo(() => contracts.map(normalizeWarrantyStatus).filter(c => !search || c.number.toLowerCase().includes(search.toLowerCase()) || c.customer.toLowerCase().includes(search.toLowerCase())), [contracts, search])
 
   const startColumnResize = (event, column) => {
     event.preventDefault()
@@ -346,14 +367,14 @@ export default function ContractsPage({ contracts, setContracts }) {
   const createContract = (form) => {
     const newContract = { 
       id: Math.max(...contracts.map(c => c.id), 0) + 1, 
-      ...form
+      ...normalizeWarrantyStatus(form)
     }
     setContracts((current) => [newContract, ...current])
     setShowForm(false)
   }
 
   const updateContract = (form) => {
-    setContracts((current) => current.map(c => c.id === editingContract.id ? { ...c, ...form } : c))
+    setContracts((current) => current.map(c => c.id === editingContract.id ? { ...c, ...normalizeWarrantyStatus(form) } : c))
     setEditingContract(null)
   }
 
@@ -388,7 +409,7 @@ export default function ContractsPage({ contracts, setContracts }) {
 }
 
 function ContractForm({ contract, onCancel, onSubmit }) {
-  const [form, setForm] = useState(contract || emptyForm)
+  const [form, setForm] = useState(() => contract ? normalizeWarrantyStatus(contract) : emptyForm)
   const [errors, setErrors] = useState({})
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const updateDeliverable = (index, field, value) => setForm((current) => ({ ...current, deliverables: current.deliverables.map((item, i) => i === index ? { ...item, [field]: value } : item) }))
@@ -397,24 +418,28 @@ function ContractForm({ contract, onCancel, onSubmit }) {
   const updateSpare = (index, field, value) => setForm((current) => ({ ...current, spares: current.spares.map((item, i) => i === index ? { ...item, [field]: value } : item) }))
   const addSpare = () => setForm((current) => ({ ...current, spares: [...current.spares, { name: '', partNumber: '', serialNumber: '', quantity: 1 }] }))
   const removeSpare = (index) => setForm((current) => ({ ...current, spares: current.spares.filter((_, i) => i !== index) }))
+  const updateSubcontract = (index, field, value) => setForm((current) => ({ ...current, subcontracts: current.subcontracts.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) }))
+  const addSubcontract = () => setForm((current) => ({ ...current, subcontracts: [...current.subcontracts, { id: `subcontract-${Date.now()}`, type: 'AMC', number: '', validFrom: '', validTo: '' }] }))
+  const removeSubcontract = (index) => setForm((current) => ({ ...current, subcontracts: current.subcontracts.filter((_, itemIndex) => itemIndex !== index) }))
   
   const submit = (event) => {
     event.preventDefault()
     const nextErrors = Object.fromEntries(['number', 'customer', 'entryDate', 'jriDate', 'expiryDate', 'status'].filter((key) => !form[key]).map((key) => [key, 'Required']))
+    const invalidSubcontract = form.subcontracts.some((subcontract) => !subcontract.type || !subcontract.number || !subcontract.validFrom || !subcontract.validTo || subcontract.validTo < subcontract.validFrom)
+    if (invalidSubcontract) nextErrors.subcontracts = 'Every subcontract needs a type, number, valid dates, and an end date on or after its start date.'
     setErrors(nextErrors)
-    if (!Object.keys(nextErrors).length) onSubmit(form)
+    if (!Object.keys(nextErrors).length) onSubmit(normalizeWarrantyStatus(form))
   }
 
-  return <form className="customer-form-page" onSubmit={submit}>
-    <header className="customer-form-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract ? 'Edit contract' : 'New contract'}</h1><p>{contract ? 'Update contract details and service information.' : 'Create a new contract with service commitments.'}</p></div><div className="customer-form-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Cancel</button><button type="submit" className="customer-submit-button">Save contract</button></div></header>
+  return <form className="customer-form-page contract-form-page" onSubmit={submit}>
+    <header className="customer-form-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract ? 'Edit contract' : 'New contract'}</h1><p>{contract ? 'Update contract details and related coverage.' : 'Create a new contract and its covered deliverables.'}</p></div><div className="customer-form-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Cancel</button><button type="submit" className="customer-submit-button">Save contract</button></div></header>
     <section className="customer-form-sheet">
       <section className="customer-form-section"><h2>Contract Information</h2><div className="customer-form-grid"><label className={`customer-field ${errors.number ? 'has-error' : ''}`}><span>{errors.number && <em>*</em>}Contract number</span><input value={form.number} onChange={(e) => update('number', e.target.value)} placeholder="e.g. TASL-CTR-001" />{errors.number && <small>{errors.number}</small>}</label><label className={`customer-field ${errors.customer ? 'has-error' : ''}`}><span>{errors.customer && <em>*</em>}Customer</span><select value={form.customer} onChange={(e) => update('customer', e.target.value)}><option value="">Select customer</option><option>Indian Air Force</option><option>Indian Army</option><option>Indian Navy</option><option>Indian Army Special Forces</option></select>{errors.customer && <small>{errors.customer}</small>}</label></div></section>
-      <section className="customer-form-section"><h2>Important Dates</h2><div className="customer-form-grid"><label className={`customer-field ${errors.entryDate ? 'has-error' : ''}`}><span>{errors.entryDate && <em>*</em>}Entry date (Contract execution)</span><input type="date" value={form.entryDate} onChange={(e) => update('entryDate', e.target.value)} />{errors.entryDate && <small>{errors.entryDate}</small>}</label><label className={`customer-field ${errors.jriDate ? 'has-error' : ''}`}><span>{errors.jriDate && <em>*</em>}JRI date (Product delivery)</span><input type="date" value={form.jriDate} onChange={(e) => update('jriDate', e.target.value)} />{errors.jriDate && <small>{errors.jriDate}</small>}</label><label className={`customer-field ${errors.expiryDate ? 'has-error' : ''}`}><span>{errors.expiryDate && <em>*</em>}Warranty expiry date</span><input type="date" value={form.expiryDate} onChange={(e) => update('expiryDate', e.target.value)} />{errors.expiryDate && <small>{errors.expiryDate}</small>}</label><label className="customer-field"><span>Next minor service</span><input type="date" value={form.minorService} onChange={(e) => update('minorService', e.target.value)} /></label><label className="customer-field"><span>Next major service</span><input type="date" value={form.majorService} onChange={(e) => update('majorService', e.target.value)} /></label></div></section>
-      <section className="customer-form-section"><h2>Warranty & Status</h2><div className="customer-form-grid"><label className={`customer-field ${errors.warranty ? 'has-error' : ''}`}><span>{errors.warranty && <em>*</em>}Warranty status</span><select value={form.warranty} onChange={(e) => update('warranty', e.target.value)}><option value="">Select status</option><option>Active - Under Warranty</option><option>Active - Under AMC</option><option>Active - Under CMC</option><option>Warranty Expired</option></select></label><label className={`customer-field ${errors.status ? 'has-error' : ''}`}><span>{errors.status && <em>*</em>}Contract status</span><select value={form.status} onChange={(e) => update('status', e.target.value)}><option value="">Select status</option><option>Active</option><option>Inactive</option><option>Expired</option></select>{errors.status && <small>{errors.status}</small>}</label><label className="customer-field"><span>Incident number prefix</span><input value={form.incidentPrefix} onChange={(e) => update('incidentPrefix', e.target.value)} placeholder="e.g. IAF" /></label></div></section>
-      <section className="customer-form-section"><h2>Service Schedule</h2><div className="customer-form-grid"><label className="customer-field full-width"><span>Minor service schedule</span><textarea value={form.minorSchedule} onChange={(e) => update('minorSchedule', e.target.value)} placeholder="e.g. 2024-05-01, 2024-08-01, 2024-11-01" rows="2" /></label><label className="customer-field full-width"><span>Major service schedule</span><textarea value={form.majorSchedule} onChange={(e) => update('majorSchedule', e.target.value)} placeholder="e.g. 2025-02-01, 2026-02-01" rows="2" /></label></div></section>
+      <section className="customer-form-section"><h2>Important Dates</h2><div className="customer-form-grid"><label className={`customer-field ${errors.entryDate ? 'has-error' : ''}`}><span>{errors.entryDate && <em>*</em>}Entry date (Contract execution)</span><input type="date" value={form.entryDate} onChange={(e) => update('entryDate', e.target.value)} />{errors.entryDate && <small>{errors.entryDate}</small>}</label><label className={`customer-field ${errors.jriDate ? 'has-error' : ''}`}><span>{errors.jriDate && <em>*</em>}JRI date (Product delivery)</span><input type="date" value={form.jriDate} onChange={(e) => { const jriDate = e.target.value; setForm((current) => normalizeWarrantyStatus({ ...current, jriDate, expiryDate: warrantyExpiryFromJri(jriDate) })) }} />{errors.jriDate && <small>{errors.jriDate}</small>}</label><label className={`customer-field ${errors.expiryDate ? 'has-error' : ''}`}><span>{errors.expiryDate && <em>*</em>}Warranty expiry date</span><input type="date" value={form.expiryDate} onChange={(e) => setForm((current) => normalizeWarrantyStatus({ ...current, expiryDate: e.target.value }))} />{errors.expiryDate && <small>{errors.expiryDate}</small>}</label><label className={`customer-field ${errors.status ? 'has-error' : ''}`}><span>{errors.status && <em>*</em>}Contract status</span><select value={form.status} onChange={(e) => update('status', e.target.value)}><option value="">Select status</option><option>Active</option><option>Inactive</option><option>Expired</option></select>{errors.status && <small>{errors.status}</small>}</label></div></section>
+      <section className="customer-form-section"><h2>Warranty & Status</h2><div className="customer-form-grid"><label className="customer-field"><span>Warranty status</span><input value={form.warranty || 'Set a warranty expiry date'} readOnly /></label><label className="customer-field"><span>System</span><input value={form.system || ''} onChange={(e) => update('system', e.target.value)} placeholder="e.g. Loitering Munition" /></label><label className="customer-field"><span>Incident number prefix</span><input value={form.incidentPrefix} onChange={(e) => update('incidentPrefix', e.target.value)} placeholder="e.g. IAF" /></label></div></section>
+      <section className="customer-form-section"><div className="customer-form-section-heading"><div><h2>Related subcontracts</h2><p>AMC and CMC coverage is retained under this main contract.</p></div><button type="button" className="compact-button secondary" onClick={addSubcontract}><Plus size={14} /> Add subcontract</button></div>{errors.subcontracts && <p className="contract-subcontract-error">{errors.subcontracts}</p>}<div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Type</th><th>Subcontract number</th><th>Valid from</th><th>Valid to</th><th>Actions</th></tr></thead><tbody>{form.subcontracts.map((item, index) => <tr key={item.id}><td><select value={item.type} onChange={(event) => updateSubcontract(index, 'type', event.target.value)}><option value="AMC">AMC</option><option value="CMC">CMC</option></select></td><td><input value={item.number} onChange={(event) => updateSubcontract(index, 'number', event.target.value)} placeholder="Contract number" /></td><td><input type="date" value={item.validFrom} onChange={(event) => updateSubcontract(index, 'validFrom', event.target.value)} /></td><td><input type="date" value={item.validTo} onChange={(event) => updateSubcontract(index, 'validTo', event.target.value)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeSubcontract(index)} title="Remove subcontract"><Trash2 size={14} /></button></td></tr>)}{!form.subcontracts.length && <tr><td colSpan="5" className="empty-row">No AMC or CMC subcontracts added.</td></tr>}</tbody></table></div></section>
       <section className="customer-form-section"><h2>Documentation</h2><div className="customer-form-grid"><label className="customer-field"><span>Manuals & versions</span><textarea value={form.manuals} onChange={(e) => update('manuals', e.target.value)} placeholder="e.g. v1.0, v1.1, v2.0" rows="2" /></label><label className="customer-field"><span>Visit record details</span><textarea value={form.visitRecord} onChange={(e) => update('visitRecord', e.target.value)} placeholder="e.g. 3 personnel, 5 days per visit" rows="2" /></label></div></section>
-      <section className="customer-form-section"><h2>Coverage Options</h2><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.maintenance} onChange={(e) => update('maintenance', e.target.checked)} /><span>Maintenance (AMC)</span></label><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.unscheduled} onChange={(e) => update('unscheduled', e.target.checked)} /><span>Unscheduled Service (CMC)</span></label><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.calibration} onChange={(e) => update('calibration', e.target.checked)} /><span>Calibration</span></label><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.softwareUpgrade} onChange={(e) => update('softwareUpgrade', e.target.checked)} /><span>Software Upgrade</span></label><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.warrantyIncluded} onChange={(e) => update('warrantyIncluded', e.target.checked)} /><span>Warranty Included</span></label><label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}><input type="checkbox" checked={form.refresherTraining} onChange={(e) => update('refresherTraining', e.target.checked)} /><span>Refresher Training</span></label></div></section>
-      <section className="customer-form-section"><h2>Deliverables</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th><th>Actions</th></tr></thead><tbody>{form.deliverables.map((item, idx) => <tr key={idx}><td><input value={item.product} onChange={(e) => updateDeliverable(idx, 'product', e.target.value)} placeholder="Select product" /></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateDeliverable(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeDeliverable(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addDeliverable}><Plus size={15} /> Add deliverable</button></section>
+      <section className="customer-form-section"><h2>Deliverables</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th><th>Actions</th></tr></thead><tbody>{form.deliverables.map((item, idx) => <tr key={idx}><td><select aria-label={`Deliverable ${idx + 1} product`} value={item.product} onChange={(e) => updateDeliverable(idx, 'product', e.target.value)}><option value="">Select product</option>{!deliverableProducts.includes(item.product) && item.product && <option value={item.product}>{item.product}</option>}{deliverableProducts.map((product) => <option key={product} value={product}>{product}</option>)}</select></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateDeliverable(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeDeliverable(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addDeliverable}><Plus size={15} /> Add deliverable</button></section>
       <section className="customer-form-section"><h2>Spares</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Spare Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th><th>Actions</th></tr></thead><tbody>{form.spares.map((item, idx) => <tr key={idx}><td><input value={item.name} onChange={(e) => updateSpare(idx, 'name', e.target.value)} placeholder="Spare name" /></td><td><input value={item.partNumber} onChange={(e) => updateSpare(idx, 'partNumber', e.target.value)} placeholder="Part number" /></td><td><input value={item.serialNumber} onChange={(e) => updateSpare(idx, 'serialNumber', e.target.value)} placeholder="Serial number" /></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateSpare(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeSpare(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addSpare}><Plus size={15} /> Add spare</button></section>
     </section>
     <footer className="customer-form-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Cancel</button><button type="submit" className="customer-submit-button">Save contract</button></footer>
@@ -422,11 +447,14 @@ function ContractForm({ contract, onCancel, onSubmit }) {
 }
 
 function ContractDetail({ contract, onCancel, onEdit }) {
+  const normalizedContract = normalizeWarrantyStatus(contract)
+  const activeCoverage = normalizedContract.subcontracts.filter((subcontract) => subcontractStatus(subcontract) === 'Active')
   return <section className="customer-detail-page">
     <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract.number}</h1><p className="customer-detail-subtitle">{contract.customer}</p></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></div></header>
     <section className="customer-detail-sheet">
-      <section className="detail-section"><h2>Contract Details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Contract Number</span><span className="detail-value">{contract.number}</span></div><div className="detail-field"><span className="detail-label">Customer</span><span className="detail-value">{contract.customer}</span></div><div className="detail-field"><span className="detail-label">Status</span><span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span></div><div className="detail-field"><span className="detail-label">Warranty</span><span className="detail-value">{contract.warranty}</span></div></div></section>
+      <section className="detail-section"><h2>Contract Details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Contract Number</span><span className="detail-value">{contract.number}</span></div><div className="detail-field"><span className="detail-label">Customer</span><span className="detail-value">{contract.customer}</span></div><div className="detail-field"><span className="detail-label">Status</span><span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span></div><div className="detail-field"><span className="detail-label">Warranty</span><span className="detail-value">{normalizedContract.warranty}</span></div><div className="detail-field"><span className="detail-label">Active coverage</span><span className="detail-value">{activeCoverage.length ? activeCoverage.map((subcontract) => <span key={subcontract.id} className="badge">{subcontract.type}</span>) : '--'}</span></div><div className="detail-field"><span className="detail-label">System</span><span className="detail-value">{contract.system || '--'}</span></div></div></section>
       <section className="detail-section"><h2>Important Dates</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Entry Date</span><span className="detail-value">{formatDate(contract.entryDate)}</span></div><div className="detail-field"><span className="detail-label">JRI Date</span><span className="detail-value">{formatDate(contract.jriDate)}</span></div><div className="detail-field"><span className="detail-label">Expiry Date</span><span className="detail-value">{formatDate(contract.expiryDate)}</span></div></div></section>
+      <section className="detail-section"><h2>Subcontracts ({normalizedContract.subcontracts.length})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Type</th><th>Subcontract number</th><th>Valid from</th><th>Valid to</th><th>Status</th></tr></thead><tbody>{normalizedContract.subcontracts.map((subcontract) => <tr key={subcontract.id}><td>{subcontract.type}</td><td>{subcontract.number}</td><td>{formatDate(subcontract.validFrom)}</td><td>{formatDate(subcontract.validTo)}</td><td><span className="badge">{subcontractStatus(subcontract)}</span></td></tr>)}{!normalizedContract.subcontracts.length && <tr><td colSpan="5" className="empty-row">No AMC or CMC subcontracts configured.</td></tr>}</tbody></table></div></section>
       <section className="detail-section"><h2>Deliverables ({contract.deliverables?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th></tr></thead><tbody>{(contract.deliverables || []).map((item, idx) => <tr key={idx}><td>{item.product}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.deliverables?.length && <tr><td colSpan="2" className="empty-row">No deliverables configured.</td></tr>}</tbody></table></div></section>
       <section className="detail-section"><h2>Spares ({contract.spares?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Spare Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th></tr></thead><tbody>{(contract.spares || []).map((item, idx) => <tr key={idx}><td>{item.name}</td><td>{item.partNumber}</td><td>{item.serialNumber}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.spares?.length && <tr><td colSpan="4" className="empty-row">No spares configured.</td></tr>}</tbody></table></div></section>
     </section>

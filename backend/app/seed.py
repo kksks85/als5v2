@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database import SessionLocal
-from app.models import ApplicationSecretNotice, AssignmentGroupRecord, CustomerRecord, IncidentRecord, ProductRecord, ProductAssetRecord, UserRecord
+from app.models import ApplicationSecretNotice, AssignmentGroupRecord, ContractRecord, CustomerRecord, IncidentRecord, ProductRecord, ProductAssetRecord, UserRecord
 
 
 NOTICES = [
@@ -28,6 +28,10 @@ WORKFLOWS = {
         "Query Registered", "Assigned Vendor", "Work in Progress - Vendor",
         "Post repair Review", "Closed",
     ],
+    "Pre Delivery Flight": [
+        "Pre-flight Inspection", "Flight Preparation", "Test Flight",
+        "Post-flight Inspection", "Delivery Clearance",
+    ],
 }
 CUSTOMERS = [
     ("Indian Air Force", "IAF"),
@@ -35,7 +39,7 @@ CUSTOMERS = [
     ("Indian Navy", "IN"),
     ("Indian Army Special Forces", "IASF"),
 ]
-PRIORITIES = ["Critical (AOG)", "High", "Medium", "Low"]
+PRIORITIES = ["High", "Medium", "Low"]
 ISSUES = [
     ("Electrical", "Intermittent power loss reported during system initialization"),
     ("Mechanical", "Actuator movement is restricted during pre-operation checks"),
@@ -65,6 +69,9 @@ def incident_state(stage: str, stage_index: int) -> str:
 
 
 def seed_incidents(database) -> None:
+    if database.scalar(select(IncidentRecord.record_id).limit(1)):
+        return
+
     customer_payloads = database.scalars(select(CustomerRecord.payload).order_by(CustomerRecord.record_id)).all()
     customer_names = {payload.get("name") for payload in customer_payloads}
     customers = [customer for customer in CUSTOMERS if not customer_names or customer[0] in customer_names]
@@ -100,7 +107,7 @@ def seed_incidents(database) -> None:
                 "title": title,
                 "description": f"{title}. Seeded for workflow and reporting validation.",
                 "customer": customer,
-                "priority": PRIORITIES[(index // len(customers)) % len(PRIORITIES)],
+                "priority": "Critical (AOG)" if index < 16 else PRIORITIES[(index - 16) % len(PRIORITIES)],
                 "state": incident_state(stage, stage_index),
                 "stage": stage,
                 "status": stage,
@@ -127,6 +134,9 @@ def seed_incidents(database) -> None:
 
 def seed_product_assets(database) -> None:
     """Seed product assets for Loitering Munition units linked to contracts."""
+    if database.scalar(select(ProductAssetRecord.record_id).limit(1)):
+        return
+
     # Define asset allocations: (serial_number, contract_number, customer, delivered_on, warranty, warranty_expiry, last_serviced)
     assets_config = [
         # Indian Air Force - Contract TASL-CTR-2026-001 (Batch 1 - Delivered Feb 2024)
@@ -166,6 +176,7 @@ def seed_product_assets(database) -> None:
     records = []
     for serial_number, contract_number, customer, delivered_on, warranty, warranty_expiry, last_serviced in assets_config:
         asset_id = f"loitering-munition::{serial_number}"
+        delivery_date = datetime.strptime(delivered_on, "%Y-%m-%d").date()
         records.append({
             "record_id": asset_id,
             "payload": {
@@ -178,6 +189,15 @@ def seed_product_assets(database) -> None:
                 "warranty": warranty,
                 "warrantyExpiry": warranty_expiry,
                 "lastServiced": last_serviced,
+                "preDeliveryFlight": {
+                    "flightReference": f"PDF-{serial_number}-2024",
+                    "flightDate": (delivery_date - timedelta(days=2)).isoformat(),
+                    "location": "TASL Flight Test Range",
+                    "testPilot": "Flight Test Team",
+                    "durationMinutes": 28 + int(serial_number.rsplit("-", 1)[-1]),
+                    "result": "Passed",
+                    "observations": "Flight controls, telemetry, payload release, and recovery checks completed without deviation.",
+                },
             },
         })
     
@@ -188,13 +208,36 @@ def seed_product_assets(database) -> None:
     ))
 
 
+def migrate_contract_lifecycle(database) -> None:
+    """Bring persisted contracts forward without replacing customer-entered data."""
+    current_date = datetime.now(UTC).date().isoformat()
+    for record in database.scalars(select(ContractRecord)).all():
+        payload = dict(record.payload)
+        changed = False
+        subcontracts = payload.get("subcontracts")
+
+        if not isinstance(subcontracts, list):
+            payload["subcontracts"] = []
+            changed = True
+
+        expiry_date = str(payload.get("expiryDate") or "")
+        if expiry_date:
+            warranty = "Warranty Expired" if expiry_date < current_date else "Active - Under Warranty"
+            if payload.get("warranty") != warranty:
+                payload["warranty"] = warranty
+                changed = True
+
+        if changed:
+            record.payload = payload
+
+
 def seed() -> None:
     with SessionLocal() as database:
         for key, description in NOTICES:
             if not database.scalar(select(ApplicationSecretNotice).where(ApplicationSecretNotice.key == key)):
                 database.add(ApplicationSecretNotice(key=key, description=description))
-            seed_incidents(database)
-            seed_product_assets(database)
+        seed_incidents(database)
+        seed_product_assets(database)
         database.commit()
 
 

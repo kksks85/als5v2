@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.entra import router as entra_router
 from app.api.v1.health import router as health_router
+from app.api.v1.notifications import router as notifications_router
 from app.api.v1.records import router as records_router
 
 app = FastAPI(
@@ -25,3 +26,4 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(records_router, prefix="/api/v1")
 app.include_router(entra_router, prefix="/api/v1")
+app.include_router(notifications_router, prefix="/api/v1")

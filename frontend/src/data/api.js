@@ -22,6 +22,9 @@ export const recordApi = {
     method: 'POST',
     body: JSON.stringify({ records }),
   }),
+  remove: (resource, recordId) => request(`/records/${resource}/${encodeURIComponent(recordId)}`, {
+    method: 'DELETE',
+  }),
 }
 
 export const entraApi = {
@@ -29,5 +32,19 @@ export const entraApi = {
   saveConfiguration: (configuration) => request('/authentication/entra/configuration', {
     method: 'PUT',
     body: JSON.stringify(configuration),
+  }),
+}
+
+export const emailApi = {
+  sendMentionNotification: (notification) => request('/notifications/mention-email', {
+    method: 'POST',
+    body: JSON.stringify(notification),
+  }),
+}
+
+export const notificationApi = {
+  createWarrantyExpiryNotification: (notification) => request('/notifications/warranty-expiry', {
+    method: 'POST',
+    body: JSON.stringify(notification),
   }),
 }
