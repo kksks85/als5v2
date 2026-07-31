@@ -19,10 +19,21 @@ export default function ProcessConfigurationPage({ assignmentGroups, repairExecu
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [viewProcess, setViewProcess] = useState(null)
   const [columnWidths, setColumnWidths] = useState(() => Object.fromEntries(columns.map(({ key, width }) => [key, width])))
+  const [sorted, setSorted] = useState({ key: 'id', direction: 'asc' })
 
   const assignmentGroupOptions = assignmentGroups.filter((group) => group.active).map((group) => group.name)
   const repairExecutionOptions = repairExecutions.filter((execution) => execution.active).map((execution) => execution.name)
-  const filteredProcesses = useMemo(() => processes.filter((process) => !search || [process.repairExecution, process.status, process.assignmentGroup, process.order].some((value) => String(value).toLowerCase().includes(search.toLowerCase()))), [processes, search])
+  const filteredProcesses = useMemo(() => processes
+    .filter((process) => !search || [process.id, process.repairExecution, process.status, process.assignmentGroup, process.order].some((value) => String(value).toLowerCase().includes(search.toLowerCase())))
+    .sort((left, right) => {
+      const comparison = String(left[sorted.key] ?? '').localeCompare(String(right[sorted.key] ?? ''), undefined, { numeric: true })
+      return sorted.direction === 'asc' ? comparison : -comparison
+    }), [processes, search, sorted])
+
+  const sortBy = (key) => setSorted((current) => ({
+    key,
+    direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }))
 
   const startColumnResize = (event, column) => {
     event.preventDefault()
@@ -57,7 +68,7 @@ export default function ProcessConfigurationPage({ assignmentGroups, repairExecu
   return <section className="customer-list-page process-list-page" aria-label="Process configuration">
     <div className="customer-list-head"><div className="customer-list-title"><h1>Process configuration</h1></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filteredProcesses.length}><Download size={15} /> Extract data</button><button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New process</button></div></div>
     <div className="customer-command-bar"><div className="customer-search"><Search size={15} /><input aria-label="Search processes" placeholder="Search processes..." value={search} onChange={(event) => setSearch(event.target.value)} /></div><span className="customer-list-count">{filteredProcesses.length ? `${filteredProcesses.length} process${filteredProcesses.length === 1 ? '' : 'es'}` : '0 results'}</span></div>
-    <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => startColumnResize(event, column)} />}</th>)}</tr></thead><tbody>{filteredProcesses.map((process) => <tr key={process.id}><td>{process.id}</td><td>{process.repairExecution}</td><td>{process.status}</td><td>{process.assignmentGroup}</td><td className="numeric">{process.order}</td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setViewProcess(process)}><Eye size={14} /></button><button className="icon-button" title="Edit" onClick={() => setEditingProcess(process)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(process)}><Trash2 size={14} /></button></td></tr>)}{!filteredProcesses.length && <tr><td colSpan="6" className="empty-row">No processes match the search criteria.</td></tr>}</tbody></table></div></div>
+    <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key} className={column.key === 'actions' ? '' : `sortable ${sorted.key === column.key ? `sorted-${sorted.direction}` : ''}`} onClick={column.key === 'actions' ? undefined : () => sortBy(column.key)}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => { event.stopPropagation(); startColumnResize(event, column) }} />}</th>)}</tr></thead><tbody>{filteredProcesses.map((process) => <tr key={process.id}><td>{process.id}</td><td>{process.repairExecution}</td><td>{process.status}</td><td>{process.assignmentGroup}</td><td className="numeric">{process.order}</td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setViewProcess(process)}><Eye size={14} /></button><button className="icon-button" title="Edit" onClick={() => setEditingProcess(process)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(process)}><Trash2 size={14} /></button></td></tr>)}{!filteredProcesses.length && <tr><td colSpan="6" className="empty-row">No processes match the search criteria.</td></tr>}</tbody></table></div></div>
     <footer className="customer-pagination"><span>Total: {processes.length} process{processes.length === 1 ? '' : 'es'}</span></footer>
     {deleteConfirm && <DeleteConfirmation process={deleteConfirm} onCancel={() => setDeleteConfirm(null)} onConfirm={() => { setProcesses((current) => current.filter((process) => process.id !== deleteConfirm.id)); setDeleteConfirm(null) }} />}
   </section>
@@ -69,7 +80,7 @@ function ProcessForm({ process, assignmentGroupOptions, repairExecutionOptions, 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const submit = (event) => {
     event.preventDefault()
-    const nextErrors = Object.fromEntries(['repairExecution', 'status', 'order'].filter((key) => !String(form[key]).trim()).map((key) => [key, 'Required']))
+    const nextErrors = Object.fromEntries(['repairExecution', 'status', 'assignmentGroup', 'order'].filter((key) => !String(form[key]).trim()).map((key) => [key, 'Required']))
     setErrors(nextErrors)
     if (!Object.keys(nextErrors).length) onSubmit({ ...form, order: Number(form.order) })
   }

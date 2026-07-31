@@ -6,10 +6,11 @@ from email.message import EmailMessage
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import NotificationRecord
+from app.models import AssignmentGroupRecord, EmailLogRecord, IncidentRecord, NotificationRecord, OutboundEmailRuleRecord, UserRecord
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -31,6 +32,19 @@ class WarrantyExpiryNotification(BaseModel):
     customer: str = Field(min_length=1, max_length=240)
     expiry_date: str = Field(alias="expiryDate", min_length=10, max_length=10)
     recipients: list[Recipient] = Field(default_factory=list, max_length=200)
+
+
+class IncidentRegistrationEmail(BaseModel):
+    incident_id: str = Field(alias="incidentId", min_length=1, max_length=160)
+    rule_id: str = Field(alias="ruleId", min_length=1, max_length=160)
+    rule_name: str = Field(alias="ruleName", min_length=1, max_length=240)
+    subject: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=20000)
+    recipients: list[Recipient] = Field(min_length=1, max_length=200)
+
+
+class SmtpTestEmail(BaseModel):
+    recipient: EmailStr
 
 
 def environment_flag(name: str, default: bool = False) -> bool:
@@ -63,6 +77,108 @@ def send_email(recipients: list[Recipient], subject: str, content: str) -> dict[
     return {"configured": True, "sent": len(recipients)}
 
 
+def current_notification_recipients(notification: IncidentRegistrationEmail, database: Session) -> list[Recipient]:
+    rule_record = database.scalar(select(OutboundEmailRuleRecord).where(OutboundEmailRuleRecord.record_id == notification.rule_id))
+    if not rule_record or not rule_record.payload.get("active"):
+        return notification.recipients
+
+    rule = rule_record.payload
+    users = [record.payload for record in database.scalars(select(UserRecord)).all()]
+    users = [user for user in users if user.get("status") == "Active" and user.get("email")]
+    groups = [record.payload for record in database.scalars(select(AssignmentGroupRecord)).all()]
+    groups = [group for group in groups if group.get("active")]
+    incident_record = database.scalar(select(IncidentRecord).where(IncidentRecord.record_id == notification.incident_id))
+    incident = incident_record.payload if incident_record else {}
+
+    def user_emails(selected_users: list[dict]) -> list[str]:
+        return [str(user["email"]).strip().lower() for user in selected_users]
+
+    def matching_users(value: object) -> list[dict]:
+        needle = str(value or "").lower()
+        return [user for user in users if any(str(user.get(field, "")).lower() == needle for field in ("id", "name", "email"))]
+
+    def group_members(selected_groups: list[dict]) -> list[dict]:
+        member_ids = {str(member_id) for group in selected_groups for member_id in group.get("memberIds", [])}
+        return [user for user in users if str(user.get("id")) in member_ids]
+
+    recipient_type = rule.get("recipientType")
+    selected_groups = [group for group in groups if str(group.get("id")) in {str(group_id) for group_id in rule.get("groupIds", [])}]
+    selected_users = [user for user in users if str(user.get("id")) in {str(user_id) for user_id in rule.get("userIds", [])}]
+    external_emails = rule.get("externalEmails", [])
+    if isinstance(external_emails, str):
+        external_emails = external_emails.replace(";", ",").split(",")
+
+    if recipient_type == "all_assignment_groups":
+        emails = user_emails(group_members(groups))
+    elif recipient_type == "multiple_assignment_groups":
+        emails = user_emails(group_members(selected_groups))
+    elif recipient_type == "assignment_group":
+        emails = user_emails(group_members([group for group in groups if group.get("name") == incident.get("assignmentGroup")]))
+    elif recipient_type == "specific_user":
+        emails = user_emails(selected_users)
+    elif recipient_type == "custom_recipients":
+        emails = [*user_emails(selected_users), *external_emails]
+    elif recipient_type in {"requester", "requested_for"}:
+        emails = user_emails(matching_users(incident.get("requestor") or incident.get("requestedFor")))
+    elif recipient_type == "assigned_to":
+        emails = user_emails(matching_users(incident.get("assignedTo")))
+    elif recipient_type == "manager":
+        emails = user_emails([user for group in selected_groups for user in matching_users(group.get("manager"))])
+    elif recipient_type == "watch_list":
+        emails = user_emails([user for value in incident.get("watchList", []) for user in matching_users(value)])
+    else:
+        return notification.recipients
+
+    unique_emails = list(dict.fromkeys(str(email).strip().lower() for email in emails if str(email).strip()))
+    return [Recipient(email=email, name=email) for email in unique_emails]
+
+
+@router.post("/smtp-connection-test")
+def test_smtp_connection() -> dict[str, bool | str]:
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USERNAME", "")).strip()
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "")
+    if not host or not sender:
+        return {
+            "success": False,
+            "message": "SMTP is not configured on the API service. Set SMTP_HOST and SMTP_FROM_EMAIL in .env, then recreate the API container.",
+        }
+    if username and not password:
+        return {
+            "success": False,
+            "message": "SMTP authentication is configured, but SMTP_PASSWORD is missing on the API service.",
+        }
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    use_ssl = environment_flag("SMTP_USE_SSL")
+    use_tls = environment_flag("SMTP_USE_TLS", not use_ssl)
+    try:
+        with (smtplib.SMTP_SSL(host, port, timeout=15) if use_ssl else smtplib.SMTP(host, port, timeout=15)) as client:
+            if use_tls:
+                client.starttls()
+            if username:
+                client.login(username, password)
+        return {"success": True, "message": "SMTP connection and authentication succeeded."}
+    except (OSError, smtplib.SMTPException) as error:
+        return {"success": False, "message": f"SMTP connection failed: {error}"}
+
+
+@router.post("/smtp-test-email")
+def send_smtp_test_email(test: SmtpTestEmail) -> dict[str, bool | str]:
+    try:
+        delivery = send_email(
+            [Recipient(email=test.recipient, name=test.recipient)],
+            "TASL ALS50 SMTP test",
+            "This is a test message from the TASL ALS50 Customer Support Management Portal. SMTP delivery is working.",
+        )
+        if delivery["configured"] and delivery["sent"]:
+            return {"success": True, "message": f"Test email sent to {test.recipient}."}
+        return {"success": False, "message": "SMTP is not configured on the API service."}
+    except (OSError, smtplib.SMTPException) as error:
+        return {"success": False, "message": f"Test email could not be sent: {error}"}
+
+
 @router.post("/mention-email")
 def send_mention_email(notification: MentionEmail) -> dict[str, int | bool]:
     return send_email(
@@ -70,6 +186,56 @@ def send_mention_email(notification: MentionEmail) -> dict[str, int | bool]:
         f"Work note mention: {notification.incident_id}",
         f"{notification.sender_name} mentioned you in work notes for incident {notification.incident_id}.\n\n{notification.work_notes}",
     )
+
+
+@router.post("/incident-registration-email")
+def send_incident_registration_email(
+    notification: IncidentRegistrationEmail,
+    database: Session = Depends(get_db),
+) -> dict[str, int | bool]:
+    created_at = datetime.now(UTC).isoformat()
+    unique_recipients = {recipient.email.lower(): recipient for recipient in current_notification_recipients(notification, database)}
+    results = []
+    for recipient in unique_recipients.values():
+        record_id = f"incident-email-{notification.incident_id}-{notification.rule_id}-{recipient.email.lower()}"
+        existing = database.scalar(select(EmailLogRecord).where(EmailLogRecord.record_id == record_id))
+        if existing and existing.payload.get("status") == "Sent":
+            results.append(existing.payload)
+            continue
+        try:
+            delivery = send_email([recipient], notification.subject, notification.content)
+            if delivery["configured"] and delivery["sent"]:
+                status = "Sent"
+                details = f"{notification.incident_id}: {notification.rule_name} delivered through the configured SMTP connector."
+            else:
+                status = "Not sent"
+                details = f"{notification.incident_id}: {notification.rule_name} matched, but SMTP_HOST and SMTP_FROM_EMAIL must be configured on the API service."
+        except (OSError, smtplib.SMTPException) as error:
+            status = "Failed"
+            details = f"{notification.incident_id}: {notification.rule_name} could not be delivered: {error}"
+        payload = {
+            "id": record_id,
+            "direction": "Outbound",
+            "event": "Incident registration notification",
+            "status": status,
+            "recipient": recipient.email.lower(),
+            "details": details,
+            "occurredAt": created_at,
+        }
+        statement = insert(EmailLogRecord).values(record_id=record_id, payload=payload)
+        statement = statement.on_conflict_do_update(
+            index_elements=[EmailLogRecord.record_id],
+            set_={"payload": statement.excluded.payload},
+        )
+        database.execute(statement)
+        results.append(payload)
+    database.commit()
+    return {
+        "configured": bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USERNAME", "")).strip()),
+        "sent": sum(result["status"] == "Sent" for result in results),
+        "failed": sum(result["status"] == "Failed" for result in results),
+        "not_sent": sum(result["status"] == "Not sent" for result in results),
+    }
 
 
 @router.post("/warranty-expiry")

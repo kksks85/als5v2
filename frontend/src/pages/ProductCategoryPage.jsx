@@ -24,7 +24,9 @@ export default function ProductCategoryPage({ category, assets, products, contra
   const [editingAsset, setEditingAsset] = useState(null)
   const [viewingAsset, setViewingAsset] = useState(null)
   const drilledSerialNumbers = useMemo(() => new Set(initialSerialNumbers), [initialSerialNumbers])
-  const categoryAssets = useMemo(() => assets.filter((asset) => asset.category === category && (selectedCustomer === 'All customers' || !asset.customer || asset.customer === selectedCustomer) && (!drilledSerialNumbers.size || drilledSerialNumbers.has(asset.serialNumber)) && (!search || [asset.serialNumber, asset.contractNumber, asset.customer, asset.warranty].some((value) => String(value || '').toLowerCase().includes(search.toLowerCase())))), [assets, category, drilledSerialNumbers, search, selectedCustomer])
+  const categoryAssets = useMemo(() => assets
+    .filter((asset) => asset.category === category && (selectedCustomer === 'All customers' || !asset.customer || asset.customer === selectedCustomer) && (!drilledSerialNumbers.size || drilledSerialNumbers.has(asset.serialNumber)) && (!search || [asset.serialNumber, asset.contractNumber, asset.customer, asset.warranty].some((value) => String(value || '').toLowerCase().includes(search.toLowerCase()))))
+    .sort((left, right) => String(left.serialNumber || '').localeCompare(String(right.serialNumber || ''), undefined, { numeric: true })), [assets, category, drilledSerialNumbers, search, selectedCustomer])
   const assignedCount = categoryAssets.filter((asset) => asset.contractNumber).length
   const coveredCount = categoryAssets.filter((asset) => asset.warranty && !asset.warranty.toLowerCase().includes('expired')).length
 

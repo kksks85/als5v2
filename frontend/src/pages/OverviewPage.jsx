@@ -31,7 +31,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
 
   const totalIncidents = incidents.length
   const openIncidents = incidents.filter((i) => i.state !== 'Resolved' && i.state !== 'Closed').length
-  const criticalIncidents = incidents.filter((i) => i.priority === 'Critical (AOG)').length
+  const criticalIncidents = incidents.filter((i) => i.priority === 'Critical' || i.priority === 'Critical (AOG)').length
   const resolvedThisWeek = incidents.filter((i) => (i.state === 'Resolved' || i.state === 'Closed') && new Date(i.opened) > new Date(Date.now() - 7 * 86400000)).length
 
   return <section className="custom-dashboard">
@@ -47,7 +47,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     <div className="dash-kpi-strip">
       <article role="button" tabIndex={0} onClick={() => onOpenIncidents({})} title="View all incidents"><span className="dash-kpi-icon total"><Activity size={16} /></span><div><strong>{totalIncidents}</strong><small>Total incidents</small></div></article>
       <article role="button" tabIndex={0} onClick={() => onOpenIncidents({ scope: 'Open' })} title="View open incidents"><span className="dash-kpi-icon open"><Clock size={16} /></span><div><strong>{openIncidents}</strong><small>Open</small></div></article>
-      <article role="button" tabIndex={0} className={criticalIncidents ? 'alert' : ''} onClick={() => onOpenIncidents({ priorityFilter: 'Critical (AOG)' })} title="View critical incidents"><span className="dash-kpi-icon critical"><AlertTriangle size={16} /></span><div><strong>{criticalIncidents}</strong><small>Critical (AOG)</small></div></article>
+      <article role="button" tabIndex={0} className={criticalIncidents ? 'alert' : ''} onClick={() => onOpenIncidents({ priorityFilter: 'Critical' })} title="View critical incidents"><span className="dash-kpi-icon critical"><AlertTriangle size={16} /></span><div><strong>{criticalIncidents}</strong><small>Critical</small></div></article>
       <article role="button" tabIndex={0} onClick={() => onOpenIncidents({ stateFilter: 'Resolved' })} title="View resolved incidents"><span className="dash-kpi-icon resolved"><CheckCircle2 size={16} /></span><div><strong>{resolvedThisWeek}</strong><small>Resolved (7d)</small></div></article>
       <article role="button" tabIndex={0} onClick={() => onNavigate('Contracts')} title="View active contracts"><span className="dash-kpi-icon trend"><TrendingUp size={16} /></span><div><strong>{filteredContracts.filter((c) => c.status === 'Active').length}</strong><small>Active contracts</small></div></article>
     </div>

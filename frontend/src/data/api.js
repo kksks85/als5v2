@@ -36,7 +36,18 @@ export const entraApi = {
 }
 
 export const emailApi = {
+  testOutboundConnection: () => request('/notifications/smtp-connection-test', {
+    method: 'POST',
+  }),
+  sendTestEmail: (recipient) => request('/notifications/smtp-test-email', {
+    method: 'POST',
+    body: JSON.stringify({ recipient }),
+  }),
   sendMentionNotification: (notification) => request('/notifications/mention-email', {
+    method: 'POST',
+    body: JSON.stringify(notification),
+  }),
+  sendIncidentRegistrationNotification: (notification) => request('/notifications/incident-registration-email', {
     method: 'POST',
     body: JSON.stringify(notification),
   }),

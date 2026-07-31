@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock, Download, Eye, GitBranch, 
 
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
 
-const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off']
+const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval']
 const APPROVAL_PRIORITIES = ['Critical', 'High', 'Normal', 'Low']
 
 const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocuments) => {
@@ -80,12 +80,39 @@ const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocume
   return [...base, ...contextual]
 }
 
+const incidentGroupApprovals = (incidents) => incidents.flatMap((incident) => {
+  const approval = incident.groupApproval
+  if (!approval?.members?.length) return []
+  return approval.members.map((member, index) => ({
+    id: `${approval.id}-${member.name}`,
+    displayId: `APR-${String(approval.id).slice(-6)}${String(index + 1).padStart(2, '0')}`,
+    ref: incident.id,
+    title: `Pre-dispatch approval: ${incident.title || incident.id}`,
+    type: 'Pre-dispatch group approval',
+    priority: incident.priority === 'Critical (AOG)' ? 'Critical' : incident.priority || 'Normal',
+    status: member.status,
+    requestedBy: approval.requestedBy || 'System',
+    assignedTo: member.name,
+    assignedToEmail: '',
+    assignmentGroup: approval.assignmentGroup || incident.assignmentGroup || incident.group || '--',
+    requestedOn: approval.requestedAt,
+    dueBy: approval.dueBy || '',
+    remarks: approval.status === 'Approved' ? `Approved by ${approval.approvedBy}.` : '',
+    resolutionDetails: incident.resolutionDetails || '',
+    incidentId: incident.id,
+    groupApproval: true,
+  }))
+})
+
+const approvalDisplayId = (approval) => approval.displayId || approval.id
+
 const statusClass = (status) => ({ Pending: 'approval-badge-pending', Approved: 'approval-badge-approved', Rejected: 'approval-badge-rejected', Delegated: 'approval-badge-delegated' }[status] || '')
 const priorityClass = (priority) => ({ Critical: 'priority-critical', High: 'priority-high', Normal: 'priority-normal', Low: 'priority-low' }[priority] || '')
 
-export default function ApprovalCenterPage({ currentUser, view, users = [], incidents = [], contracts = [], knowledgeDocuments = [] }) {
-  const allApprovals = useMemo(() => seedApprovals(currentUser, users, incidents, contracts, knowledgeDocuments), [currentUser, users, incidents, contracts, knowledgeDocuments])
+export default function ApprovalCenterPage({ currentUser, view, users = [], incidents = [], contracts = [], knowledgeDocuments = [], onResolveGroupApproval, onOpenIncident }) {
+  const allApprovals = useMemo(() => [...incidentGroupApprovals(incidents), ...seedApprovals(currentUser, users, incidents, contracts, knowledgeDocuments)], [currentUser, users, incidents, contracts, knowledgeDocuments])
   const [selected, setSelected] = useState(null)
+  const [decisionRequest, setDecisionRequest] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [typeFilter, setTypeFilter] = useState('All')
@@ -114,8 +141,8 @@ export default function ApprovalCenterPage({ currentUser, view, users = [], inci
 
   const exportCsv = () => {
     const csv = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`
-    const headers = ['Approval ID', 'Reference', 'Title', 'Type', 'Priority', 'Status', 'Requested by', 'Assigned to', 'Delegated to', 'Requested on', 'Due by']
-    const rows = approvals.map((approval) => [approval.id, approval.ref, approval.title, approval.type, approval.priority, approval.status, approval.requestedBy, approval.assignedTo, approval.delegatedTo || '--', formatDate(approval.requestedOn), formatDate(approval.dueBy)])
+    const headers = ['Approval ID', 'Incident ID', 'Approval type', 'Requested by', 'Assignment group', 'Approval status', 'Requested on']
+    const rows = approvals.map((approval) => [approvalDisplayId(approval), approval.ref, approval.type, approval.requestedBy, approval.assignmentGroup || approval.assignedTo, approval.status, formatDate(approval.requestedOn)])
     const content = [headers, ...rows].map((row) => row.map(csv).join(',')).join('\n')
     const link = document.createElement('a')
     link.href = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8;' }))
@@ -124,7 +151,15 @@ export default function ApprovalCenterPage({ currentUser, view, users = [], inci
     URL.revokeObjectURL(link.href)
   }
 
-  if (selected) return <ApprovalDetail approval={selected} currentUser={currentUser} onClose={() => setSelected(null)} />
+  const requestDecision = (approval, decision) => setDecisionRequest({ approval, decision })
+  const submitDecision = async (reason) => {
+    if (decisionRequest.approval.groupApproval) await onResolveGroupApproval?.(decisionRequest.approval.incidentId, decisionRequest.decision, reason)
+    else alert(`${decisionRequest.decision}: ${decisionRequest.approval.id}\nReason: ${reason}`)
+    setDecisionRequest(null)
+    setSelected(null)
+  }
+
+  if (selected) return <ApprovalDetail approval={selected} currentUser={currentUser} onClose={() => setSelected(null)} onRequestDecision={requestDecision} onOpenIncident={onOpenIncident} decisionRequest={decisionRequest} onCloseDecision={() => setDecisionRequest(null)} onSubmitDecision={submitDecision} />
 
   const viewLabel = view === 'mine' ? 'My Current Approvals' : 'My Delegated Approvals'
   const viewDescription = view === 'mine'
@@ -157,38 +192,32 @@ export default function ApprovalCenterPage({ currentUser, view, users = [], inci
           <thead>
             <tr>
               <th>Approval ID</th>
-              <th>Title</th>
-              <th>Type</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>{view === 'mine' ? 'Requested by' : 'Direction'}</th>
-              {view === 'delegated' && <th>Counterpart</th>}
-              <th>Due by</th>
+              <th>Incident ID</th>
+              <th>Approval type</th>
+              <th>Requested by</th>
+              <th>Assignment group</th>
+              <th>Approval status</th>
+              <th>Requested on</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {approvals.map((approval) => (
               <tr key={approval.id}>
-                <td><button className="approval-id-link" onClick={() => setSelected(approval)}>{approval.id}</button></td>
-                <td><span className="approval-title" title={approval.title}>{approval.title}</span></td>
+                <td><button className="approval-id-link" onClick={() => setSelected(approval)}>{approvalDisplayId(approval)}</button></td>
+                <td>{approval.ref}</td>
                 <td><span className="approval-type-tag">{approval.type}</span></td>
-                <td><span className={`approval-priority ${priorityClass(approval.priority)}`}>{approval.priority}</span></td>
+                <td>{approval.requestedBy}</td>
+                <td>{approval.assignmentGroup || approval.assignedTo}</td>
                 <td><span className={`approval-badge ${statusClass(approval.status)}`}>{approval.status}</span></td>
-                <td>{view === 'mine' ? approval.requestedBy : (
-                  (approval.assignedTo === currentUser.name || users.find((u) => u.name === approval.assignedTo)?.email === currentUser.email)
-                    ? <span className="delegation-direction by-me">By me →</span>
-                    : <span className="delegation-direction to-me">← To me</span>
-                )}</td>
-                {view === 'delegated' && <td>{(approval.assignedTo === currentUser.name || users.find((u) => u.name === approval.assignedTo)?.email === currentUser.email) ? approval.delegatedTo : approval.assignedTo}</td>}
-                <td>{formatDate(approval.dueBy)}</td>
+                <td>{formatDate(approval.requestedOn)}</td>
                 <td>
                   <div className="row-actions">
                     <button className="action-btn" title="View approval" onClick={() => setSelected(approval)}><Eye size={15} /></button>
                     {approval.status === 'Pending' && (
                       <>
-                        <button className="action-btn approve" title="Approve" onClick={() => alert(`Approved: ${approval.id}`)}><CheckCircle2 size={15} /></button>
-                        <button className="action-btn delete" title="Reject" onClick={() => alert(`Rejected: ${approval.id}`)}><XCircle size={15} /></button>
+                        <button className="action-btn approve" title="Approve" onClick={() => requestDecision(approval, 'Approved')}><CheckCircle2 size={15} /></button>
+                        <button className="action-btn delete" title="Reject" onClick={() => requestDecision(approval, 'Rejected')}><XCircle size={15} /></button>
                       </>
                     )}
                   </div>
@@ -201,61 +230,68 @@ export default function ApprovalCenterPage({ currentUser, view, users = [], inci
           </tbody>
         </table>
       </div>
+      {decisionRequest && <ApprovalDecisionDialog decision={decisionRequest.decision} onClose={() => setDecisionRequest(null)} onSubmit={submitDecision} />}
     </section>
   )
 }
 
-function ApprovalDetail({ approval, currentUser, onClose }) {
+function ApprovalDetail({ approval, currentUser, onClose, onRequestDecision, onOpenIncident, decisionRequest, onCloseDecision, onSubmitDecision }) {
+  const canAct = approval.status === 'Pending'
   return (
     <section className="approval-detail-page">
-      <header className="customer-detail-header">
-        <button className="compact-button secondary" onClick={onClose}><ArrowLeft size={15} /> Back</button>
-        <h1>{approval.id}</h1>
-        <span className={`approval-badge ${statusClass(approval.status)}`}>{approval.status}</span>
+      <header className="approval-detail-hero">
+        <button className="approval-back-button" onClick={onClose} aria-label="Back to approvals" title="Back to approvals"><ArrowLeft size={16} /></button>
+        <div className="approval-detail-heading">
+          <p>Approval request</p>
+          <h1>{approval.title}</h1>
+          <div><span>{approvalDisplayId(approval)}</span><b>{approval.ref}</b></div>
+        </div>
+        <div className="approval-detail-state"><span className={`approval-badge ${statusClass(approval.status)}`}>{approval.status}</span>{canAct && <small>Decision required</small>}</div>
       </header>
 
-      <div className="approval-detail-body">
-        <section className="approval-detail-section">
-          <h3>Request details</h3>
-          <div className="customer-detail-grid">
-            <div className="detail-field"><span className="detail-label">Approval ID</span><span className="detail-value">{approval.id}</span></div>
-            <div className="detail-field"><span className="detail-label">Reference</span><span className="detail-value">{approval.ref}</span></div>
-            <div className="detail-field" style={{ gridColumn: '1 / -1' }}><span className="detail-label">Title</span><span className="detail-value">{approval.title}</span></div>
-            <div className="detail-field"><span className="detail-label">Type</span><span className="detail-value">{approval.type}</span></div>
-            <div className="detail-field"><span className="detail-label">Priority</span><span className={`detail-value approval-priority ${priorityClass(approval.priority)}`}>{approval.priority}</span></div>
-            <div className="detail-field"><span className="detail-label">Status</span><span className={`detail-value approval-badge ${statusClass(approval.status)}`}>{approval.status}</span></div>
-          </div>
-        </section>
-
-        <section className="approval-detail-section">
-          <h3>Assignment</h3>
-          <div className="customer-detail-grid">
-            <div className="detail-field"><span className="detail-label">Requested by</span><span className="detail-value">{approval.requestedBy}</span></div>
-            <div className="detail-field"><span className="detail-label">Assigned to</span><span className="detail-value">{approval.assignedTo}</span></div>
-            {approval.delegatedTo && <div className="detail-field"><span className="detail-label">Delegated to</span><span className="detail-value">{approval.delegatedTo}</span></div>}
-            <div className="detail-field"><span className="detail-label">Requested on</span><span className="detail-value">{formatDate(approval.requestedOn)}</span></div>
-            <div className="detail-field"><span className="detail-label">Due by</span><span className="detail-value">{formatDate(approval.dueBy)}</span></div>
-          </div>
-        </section>
-
-        {approval.remarks && (
+      <div className="approval-detail-layout">
+        <main className="approval-detail-main">
           <section className="approval-detail-section">
-            <h3>Remarks</h3>
-            <p className="approval-remarks">{approval.remarks}</p>
+            <header><h2>Request</h2><span className="approval-type-tag">{approval.type}</span></header>
+            <dl className="approval-metadata-grid">
+              <div><dt>Incident ID</dt><dd><button type="button" className="approval-incident-link" onClick={() => onOpenIncident?.(approval.incidentId || approval.ref)}>{approval.ref}</button></dd></div>
+              <div><dt>Priority</dt><dd><span className={`approval-priority ${priorityClass(approval.priority)}`}>{approval.priority}</span></dd></div>
+              <div><dt>Requested by</dt><dd>{approval.requestedBy}</dd></div>
+              <div><dt>Requested on</dt><dd>{formatDate(approval.requestedOn)}</dd></div>
+            </dl>
           </section>
-        )}
-
-        {approval.status === 'Pending' && (
-          <section className="approval-detail-section approval-actions-section">
-            <h3>Actions</h3>
+          <section className="approval-detail-section approval-resolution-section">
+            <header><h2>Resolution details</h2><span>Read only</span></header>
+            <textarea aria-label="Resolution details" value={approval.resolutionDetails || ''} readOnly placeholder="No resolution notes have been recorded for this incident." />
+          </section>
+          {approval.remarks && <section className="approval-detail-section"><header><h2>Remarks</h2></header><p className="approval-remarks">{approval.remarks}</p></section>}
+        </main>
+        <aside className="approval-detail-sidebar">
+          <section className="approval-detail-section">
+            <header><h2>Assignment</h2></header>
+            <dl className="approval-assignment-list">
+              <div><dt>Assignment group</dt><dd>{approval.assignmentGroup || '--'}</dd></div>
+              <div><dt>Assigned to</dt><dd>{approval.assignedTo}</dd></div>
+              {approval.delegatedTo && <div><dt>Delegated to</dt><dd>{approval.delegatedTo}</dd></div>}
+              <div><dt>Due by</dt><dd>{formatDate(approval.dueBy)}</dd></div>
+            </dl>
+          </section>
+          {canAct && <section className="approval-decision-panel">
+            <div><h2>Decision</h2><p>Approving this group request closes the remaining pending member approvals.</p></div>
             <div className="approval-action-buttons">
-              <button className="compact-button primary" onClick={() => alert(`Approved: ${approval.id}`)}><CheckCircle2 size={15} /> Approve</button>
-              <button className="compact-button secondary danger" onClick={() => alert(`Rejected: ${approval.id}`)}><XCircle size={15} /> Reject</button>
-              <button className="compact-button secondary" onClick={() => alert(`Delegated: ${approval.id}`)}><GitBranch size={15} /> Delegate</button>
+              <button className="compact-button primary" onClick={() => onRequestDecision(approval, 'Approved')}><CheckCircle2 size={15} /> Approve</button>
+              <button className="compact-button secondary danger" onClick={() => onRequestDecision(approval, 'Rejected')}><XCircle size={15} /> Reject</button>
             </div>
-          </section>
-        )}
+          </section>}
+        </aside>
       </div>
+      {decisionRequest && <ApprovalDecisionDialog decision={decisionRequest.decision} onClose={onCloseDecision} onSubmit={onSubmitDecision} />}
     </section>
   )
+}
+
+function ApprovalDecisionDialog({ decision, onClose, onSubmit }) {
+  const [reason, setReason] = useState('')
+  const action = decision.toLowerCase()
+  return <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label={`${decision} approval`}><h2>{decision} approval</h2><p>Enter the reason for this decision. It will be recorded in the incident journal.</p><label className="approval-decision-reason"><span>Decision reason</span><textarea autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder={`Why is this approval being ${action}?`} rows="4" /></label><footer><button type="button" className="incident-cancel-button" onClick={onClose}>Cancel</button><button type="button" className={decision === 'Approved' ? 'incident-next-stage-button' : 'compact-button secondary danger'} disabled={!reason.trim()} onClick={() => onSubmit(reason.trim())}>{decision}</button></footer></section></div>
 }

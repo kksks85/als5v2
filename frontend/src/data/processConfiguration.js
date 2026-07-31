@@ -104,6 +104,15 @@ export const getProcessStages = (repairExecution, processes = getConfiguredProce
     .map((process, index) => ({ ...process, order: index + 1 }))
 }
 
+export const getProcessStage = (repairExecution, status, processes = getConfiguredProcesses()) => getProcessStages(repairExecution, processes)
+  .find((stage) => stage.status === status)
+
+export const getNextProcessStage = (repairExecution, status, processes = getConfiguredProcesses()) => {
+  const stages = getProcessStages(repairExecution, processes)
+  const currentIndex = stages.findIndex((stage) => stage.status === status)
+  return currentIndex >= 0 ? stages[currentIndex + 1] : undefined
+}
+
 export const getRepairExecutions = (processes = getConfiguredProcesses()) => [...new Set(processes
   .map((process) => process.repairExecution)
   .filter(Boolean))]

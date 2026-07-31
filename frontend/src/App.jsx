@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, Bell, BookOpen, Building2, ChevronDown, ChevronRight, CircleHelp,
   ClipboardList, FileText, LayoutDashboard, Lock, LogIn,
@@ -24,7 +24,7 @@ import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
 import { notificationApi, recordApi } from './data/api'
 import { getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
-import { getConfiguredProcesses, processConfigurationStorageKey } from './data/processConfiguration'
+import { getConfiguredProcesses, getNextProcessStage, processConfigurationStorageKey } from './data/processConfiguration'
 
 /* ──────────────────────────────────────────
    Navigation config
@@ -72,6 +72,25 @@ const normalizeIncidentOpenedDates = (incidents) => incidents.map((incident) => 
   const parsed = new Date(incident.opened)
   return Number.isNaN(parsed.getTime()) ? { ...incident, ...workflowDefaults, ...auditUpdates } : { ...incident, ...workflowDefaults, ...auditUpdates, opened: parsed.toISOString() }
 })
+
+const normalizeAssignmentGroupName = (name) => ({
+  'Customer Support Management Team': 'Customer Support Management Group',
+  'Supply Chain Management': 'Supply Chain management',
+}[name] || name)
+const normalizeIncidentAssignmentGroups = (incidents) => incidents.map((incident) => {
+  const currentAssignmentGroup = incident.assignmentGroup || incident.group || ''
+  const assignmentGroup = normalizeAssignmentGroupName(currentAssignmentGroup)
+  return assignmentGroup === currentAssignmentGroup
+    ? incident
+    : { ...incident, assignmentGroup, group: assignmentGroup, assignedTo: '' }
+})
+const normalizeProcessAssignmentGroups = (processes) => processes.map((process) => {
+  const assignmentGroup = normalizeAssignmentGroupName(process.assignmentGroup || '')
+  return assignmentGroup === process.assignmentGroup ? process : { ...process, assignmentGroup }
+})
+
+const recordMapsEqual = (first, second) => first.size === second.size
+  && [...first].every(([recordId, payload]) => second.get(recordId) === payload)
 
 const reseedCustomerContacts = (customers) => {
   if (localStorage.getItem(customerContactMigrationKey)) return customers
@@ -152,17 +171,31 @@ const initialAssignmentGroups = [
 /* ──────────────────────────────────────────
    Login Page
    ────────────────────────────────────────── */
-function LoginPage({ onLogin }) {
-  const demoUsers = [
-    { key: 'admin', label: 'Administrator', name: 'Amitabh Sharma', email: 'amitabh.sharma@aerofix.in', role: 'Administrator', initials: 'AS', credential: 'ALS-ADMIN-001' },
-    { key: 'manager', label: 'Manager', name: 'Rahul Mehta', email: 'rahul.mehta@aerofix.in', role: 'Manager', initials: 'RM', credential: 'ALS-MGR-003' },
-    { key: 'engineer', label: 'Service engineer', name: 'Aarav Patel', email: 'aarav.patel@aerofix.in', role: 'Service engineer', initials: 'AP', credential: 'ALS-EMP-013' },
-  ]
-  const [selectedUser, setSelectedUser] = useState(demoUsers[0])
+function LoginPage({ onLogin, users, assignmentGroups, directoryReady }) {
+  const initialsFor = (name) => name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+  const demoUsers = useMemo(() => [
+    ...users
+      .filter((user) => user.status === 'Active' && user.role === 'Administrator')
+      .slice(0, 1)
+      .map((user) => ({ key: 'admin', label: 'Administrator', name: user.name, email: user.email, role: user.role, initials: initialsFor(user.name), credential: user.employeeId })),
+    ...assignmentGroups
+      .filter((group) => group.active)
+      .map((group) => {
+        const member = users.find((user) => group.memberIds?.includes(user.id) && user.status === 'Active')
+        return member && { key: `group-${group.id}`, label: group.name, name: member.name, email: member.email, role: member.role, initials: initialsFor(member.name), credential: member.employeeId }
+      })
+      .filter(Boolean),
+  ], [assignmentGroups, users])
+  const [selectedUserKey, setSelectedUserKey] = useState('')
+  const selectedUser = demoUsers.find((user) => user.key === selectedUserKey) || demoUsers[0]
+
+  useEffect(() => {
+    if (!demoUsers.some((user) => user.key === selectedUserKey)) setSelectedUserKey(demoUsers[0]?.key || '')
+  }, [demoUsers, selectedUserKey])
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    onLogin(selectedUser)
+    if (selectedUser) onLogin(selectedUser)
   }
 
   return (
@@ -181,11 +214,11 @@ function LoginPage({ onLogin }) {
         <img className="tata-wordmark" src="/assets/tasl_logo.png" alt="Tata Advanced Systems" />
         <div className="login-card">
           <p className="login-eyebrow">Demo access</p>
-          <h2>Choose a workspace role</h2>
-          <p className="login-desc">Select a test identity to open the Customer Support Management Portal.</p>
+          <h2>Choose a test identity</h2>
+          <p className="login-desc">{directoryReady ? 'Select a representative from an assignment group to test incident visibility and workflow routing.' : 'Loading active assignment group members...'}</p>
           <form onSubmit={handleSubmit}>
-            <div className="demo-user-tiles">{demoUsers.map((demoUser) => <button type="button" key={demoUser.key} className={`demo-user-tile ${selectedUser.key === demoUser.key ? 'selected' : ''}`} onClick={() => setSelectedUser(demoUser)}><span className="demo-user-avatar">{demoUser.initials}</span><span className="demo-user-details"><strong>{demoUser.label}</strong><small>{demoUser.name}</small><small>{demoUser.email}</small></span><span className="demo-user-credential">{demoUser.credential}</span></button>)}</div>
-            <div className="login-actions"><button type="submit" className="login-btn primary"><LogIn size={17} /> Continue as {selectedUser.label}</button></div>
+            <div className="demo-user-tiles">{demoUsers.map((demoUser) => <button type="button" key={demoUser.key} className={`demo-user-tile ${selectedUser?.key === demoUser.key ? 'selected' : ''}`} onClick={() => setSelectedUserKey(demoUser.key)}><span className="demo-user-avatar">{demoUser.initials}</span><span className="demo-user-details"><strong>{demoUser.label}</strong><small>{demoUser.name}</small><small>{demoUser.email}</small></span><span className="demo-user-credential">{demoUser.credential}</span></button>)}</div>
+            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={!directoryReady || !selectedUser}><LogIn size={17} /> Continue as {selectedUser?.name || 'selected user'}</button></div>
           </form>
           <div className="login-footer"><Lock size={13} /> Demo identities map to the seeded user records and Entra IDs.</div>
         </div>
@@ -275,6 +308,7 @@ function Dashboard({ user, onLogout }) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(true)
+  const [incidentNavigationOpen, setIncidentNavigationOpen] = useState(true)
   const [approvalCenterOpen, setApprovalCenterOpen] = useState(true)
   const [selectedCustomer, setSelectedCustomer] = useState('All customers')
   const [incidentEditMode, setIncidentEditMode] = useState(false)
@@ -290,6 +324,9 @@ function Dashboard({ user, onLogout }) {
   const [processes, setProcesses] = useState(() => getConfiguredProcesses())
   const [notifications, setNotifications] = useState([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationToasts, setNotificationToasts] = useState([])
+  const seenNotificationIds = useRef(new Set())
+  const notificationsInitialized = useRef(false)
   const [persistenceReady, setPersistenceReady] = useState(false)
   const persistedCollections = useRef({})
   const currentCollections = useRef({})
@@ -351,8 +388,9 @@ function Dashboard({ user, onLogout }) {
             if (active) setRecords(resource === 'assignment_groups'
               ? persistedRecords.map((group) => group.name === 'Customer Support Manager' ? { ...group, name: 'Customer Support Management Group' } : group.name === 'Advisory Team' ? { ...group, name: 'Advisory Group' } : group)
               : resource === 'customers' ? reseedCustomerContacts(persistedRecords)
-                : resource === 'incidents' ? normalizeIncidentOpenedDates(persistedRecords)
-                  : persistedRecords)
+                : resource === 'incidents' ? normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(persistedRecords))
+                  : resource === 'process_configurations' ? normalizeProcessAssignmentGroups(persistedRecords)
+                    : persistedRecords)
             persistedCollections.current[resource] = new Map(stored.map((record) => [record.record_id, JSON.stringify(record.payload)]))
             return
           }
@@ -499,15 +537,16 @@ function Dashboard({ user, onLogout }) {
           const remoteMap = new Map(stored.map((record) => [record.record_id, JSON.stringify(record.payload)]))
           const persistedMap = persistedCollections.current[resource] || new Map()
           const currentMap = currentCollections.current[resource] || new Map()
-          if (JSON.stringify([...remoteMap]) === JSON.stringify([...persistedMap]) || JSON.stringify([...currentMap]) !== JSON.stringify([...persistedMap])) return
+          if (recordMapsEqual(remoteMap, persistedMap) || !recordMapsEqual(currentMap, persistedMap)) return
           const records = stored.map((record) => resource === 'products'
             ? { ...record.payload, productRecordId: record.payload.productRecordId || record.record_id }
             : record.payload)
           setRecords(resource === 'assignment_groups'
             ? records.map((group) => group.name === 'Customer Support Manager' ? { ...group, name: 'Customer Support Management Group' } : group.name === 'Advisory Team' ? { ...group, name: 'Advisory Group' } : group)
             : resource === 'customers' ? reseedCustomerContacts(records)
-              : resource === 'incidents' ? normalizeIncidentOpenedDates(records)
-                : records)
+              : resource === 'incidents' ? normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(records))
+                : resource === 'process_configurations' ? normalizeProcessAssignmentGroups(records)
+                  : records)
           persistedCollections.current[resource] = remoteMap
         } catch (error) {
           console.warn(`Unable to refresh ${resource}.`, error)
@@ -551,24 +590,109 @@ function Dashboard({ user, onLogout }) {
 
   const applicationData = { customers, incidents, contracts, products, productAssets, knowledgeDocuments, users, assignmentGroups, notifications }
   const productCategories = getProductCategories(products)
-  const unreadNotifications = notifications.filter((notification) => !notification.read)
-  const toggleNotifications = () => {
-    const opening = !notificationsOpen
-    setNotificationsOpen(opening)
-    if (opening) setNotifications((current) => current.map((notification) => notification.read ? notification : { ...notification, read: true }))
+  const currentUserRecord = users.find((member) => member.email === user.email) || user
+  const resolveGroupApproval = async (incidentId, decision, reason) => {
+    const incident = incidents.find((entry) => entry.id === incidentId)
+    const approval = incident?.groupApproval
+    if (!approval || approval.status !== 'Pending') return
+    const decidedBy = currentUserRecord.name || user.name || user.email
+    if (!approval.members?.some((member) => member.name === decidedBy && member.status === 'Pending')) return
+    const decidedAt = new Date().toISOString()
+    const nextStage = decision === 'Approved'
+      ? getNextProcessStage(incident.repairExecution, incident.status, processes)
+      : null
+    const nextAssignmentGroup = nextStage?.assignmentGroup || incident.assignmentGroup || incident.group || ''
+    const updatedIncident = {
+      ...incident,
+      ...(nextStage ? {
+        status: nextStage.status,
+        stage: nextStage.status,
+        assignmentGroup: nextAssignmentGroup,
+        group: nextAssignmentGroup,
+        assignedTo: '',
+      } : {}),
+      groupApproval: {
+        ...approval,
+        status: decision,
+        decision,
+        decisionBy: decidedBy,
+        decisionAt: decidedAt,
+        decisionReason: reason,
+        approvedBy: decision === 'Approved' ? decidedBy : '',
+        approvedAt: decision === 'Approved' ? decidedAt : '',
+        members: approval.members.map((member) => member.name === decidedBy
+          ? { ...member, status: decision, decisionReason: reason, completedAt: decidedAt }
+          : member.status === 'Pending' ? { ...member, status: 'Cancelled', completedAt: decidedAt } : member),
+      },
+      auditLog: [...(incident.auditLog || []), {
+        id: `approval-${Date.now()}-${Math.random()}`,
+        assignedGroup: approval.assignmentGroup || incident.assignmentGroup || incident.group || '',
+        updatedBy: decidedBy,
+        updatedAt: decidedAt,
+        changes: [
+          { field: 'Approval request', previous: 'Pending', next: approval.id },
+          { field: 'Approval decision', previous: 'Pending', next: decision },
+          { field: 'Approval reason', previous: '', next: reason },
+          { field: 'Approval group', previous: '', next: approval.assignmentGroup || incident.assignmentGroup || incident.group || '--' },
+          ...(nextStage ? [
+            { field: 'Status', previous: incident.status, next: nextStage.status },
+            { field: 'Assigned group', previous: incident.assignmentGroup || incident.group || '--', next: nextAssignmentGroup || '--' },
+            { field: 'Assigned to', previous: incident.assignedTo || '--', next: '--' },
+          ] : []),
+        ],
+      }],
+    }
+    await recordApi.bulkUpsert('incidents', [{ record_id: updatedIncident.id, payload: updatedIncident }])
+    setIncidents((current) => current.map((entry) => entry.id === updatedIncident.id ? updatedIncident : entry))
   }
+  const openIncidentFromApproval = (incidentId) => {
+    setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, activeTab: 'Notes', navigationId: Date.now() })
+    setActivePage('Incidents')
+  }
+  const notificationsForCurrentUser = notifications.filter((notification) => !notification.recipientUserId || String(notification.recipientUserId) === String(currentUserRecord.id))
+  const unreadNotifications = notificationsForCurrentUser.filter((notification) => notification.recipientUserId ? !notification.readByUserIds?.includes(currentUserRecord.id) : !notification.read)
+  const currentUserGroupNames = assignmentGroups
+    .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
+    .map((group) => group.name)
+  const visibleIncidentCount = incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group)).length
+  useEffect(() => {
+    if (!persistenceReady) return
+    const nextNotifications = notifications.filter((notification) => notification.recipientUserId && String(notification.recipientUserId) === String(currentUserRecord.id) && !seenNotificationIds.current.has(notification.id))
+    nextNotifications.forEach((notification) => seenNotificationIds.current.add(notification.id))
+    if (!notificationsInitialized.current) {
+      notificationsInitialized.current = true
+      return
+    }
+    if (!nextNotifications.length) return
+    setNotificationToasts((current) => [...current, ...nextNotifications])
+    const timer = window.setTimeout(() => setNotificationToasts((current) => current.filter((notification) => !nextNotifications.some((next) => next.id === notification.id))), 6000)
+    return () => window.clearTimeout(timer)
+  }, [currentUserRecord.id, notifications, persistenceReady])
+
+  const toggleNotifications = () => setNotificationsOpen((open) => !open)
+  const openNotification = (notification) => {
+    setNotifications((current) => current.map((entry) => entry.id !== notification.id ? entry : entry.recipientUserId
+      ? { ...entry, readByUserIds: [...new Set([...(entry.readByUserIds || []), currentUserRecord.id])] }
+      : { ...entry, read: true }))
+    setNotificationsOpen(false)
+    if (notification.incidentId) {
+      setIncidentDrill({ incidentIds: [notification.incidentId], selectedIncidentId: notification.incidentId, activeTab: 'Notes', navigationId: Date.now() })
+      setActivePage('Incidents')
+    }
+  }
+  const createNotifications = (nextNotifications) => setNotifications((current) => [...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))])
 
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
-      return <ProductCategoryPage category={category} assets={productAssets} products={products} contracts={contracts} currentUser={user} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
+      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={products} contracts={contracts} currentUser={user} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
       case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
-      case 'Incidents': return <IncidentsPage currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={products} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
+      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={products} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
       case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} />
@@ -577,10 +701,10 @@ function Dashboard({ user, onLogout }) {
       case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
       case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} />
       case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} />
-      case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} />
-      case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} />
+      case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
+      case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
       case 'Process configuration': return <ProcessConfigurationPage assignmentGroups={assignmentGroups} repairExecutions={repairExecutions} processes={processes} setProcesses={setProcesses} />
-      case 'Email settings': return <EmailSettingsPage />
+      case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} />
       case 'System settings': return <SystemSettingsPage />
       default: return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} />
     }
@@ -598,14 +722,18 @@ function Dashboard({ user, onLogout }) {
         <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
           {workspaceNav.map(({ key, label, icon: Icon, count }) => {
-            const displayCount = key === 'Incidents' ? incidents.length : count
+            const displayCount = key === 'Incidents' ? visibleIncidentCount : count
+            if (key === 'Incidents') return <div className="nav-group" key={key}>
+              <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
+              {incidentNavigationOpen && <div className="nav-submenu">{[{ label: 'Assigned to my group', scope: 'Assigned to my group' }, { label: 'Assigned to me', scope: 'Assigned to me' }].map((item) => <button key={item.scope} className={activePage === 'Incidents' && incidentDrill?.scope === item.scope ? 'active' : ''} onClick={() => { setIncidentDrill({ scope: item.scope, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{item.label}</span></button>)}</div>}
+            </div>
             if (key === 'Approval center') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Approval center:') ? 'active' : ''}`} aria-expanded={approvalCenterOpen} onClick={() => setApprovalCenterOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={approvalCenterOpen ? 'expanded' : ''} /></button>
               {approvalCenterOpen && <div className="nav-submenu">{['My Current Approvals', 'My Delegated Approvals'].map((item) => <button key={item} className={activePage === `Approval center: ${item}` ? 'active' : ''} onClick={() => { setActivePage(`Approval center: ${item}`); setMobileNavigationOpen(false) }}><span>{item}</span></button>)}</div>}
             </div>
             if (key === 'Product categories') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Product category:') ? 'active' : ''}`} aria-expanded={categoryNavigationOpen} onClick={() => setCategoryNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={categoryNavigationOpen ? 'expanded' : ''} /></button>
-              {categoryNavigationOpen && <div className="nav-submenu">{productCategories.map((category) => <button key={category} className={activePage === `Product category:${category}` ? 'active' : ''} onClick={() => { setActivePage(`Product category:${category}`); setMobileNavigationOpen(false) }}><span>{category}</span><b>{productAssets.filter((asset) => asset.category === category).length}</b></button>)}</div>}
+              {categoryNavigationOpen && <div className="nav-submenu">{productCategories.map((category) => <button key={category} className={activePage === `Product category:${category}` ? 'active' : ''} onClick={() => { setProductAssetDrill({ category, serialNumbers: [], navigationId: Date.now() }); setActivePage(`Product category:${category}`); setMobileNavigationOpen(false) }}><span>{category}</span><b>{productAssets.filter((asset) => asset.category === category).length}</b></button>)}</div>}
             </div>
             return (
               <button key={key} className={`nav-item ${activePage === key ? 'active' : ''}`} onClick={() => { if (key === 'Reporting') setReportingVisit((current) => current + 1); setActivePage(key); setMobileNavigationOpen(false) }}>
@@ -641,7 +769,7 @@ function Dashboard({ user, onLogout }) {
               </select>
             </label>}
             <button className="icon-button" aria-label="Search" onClick={() => setSearchOpen(!searchOpen)}><Search size={19} /></button>
-            <div className="notification-menu"><button className="icon-button notification" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={toggleNotifications}><Bell size={19} />{unreadNotifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><header><strong>Notifications</strong><span>{notifications.length}</span></header>{notifications.length ? <ul>{notifications.map((notification) => <li key={notification.id}><strong>{notification.title}</strong><span>{notification.contractNumber} · {notification.customer}</span><small>Expired {notification.expiryDate} · {notification.recipientGroup}</small></li>)}</ul> : <p>No notifications.</p>}</div>}</div>
+            <div className="notification-menu"><button className="icon-button notification" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={toggleNotifications}><Bell size={19} />{unreadNotifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><header><strong>Notifications</strong><span>{unreadNotifications.length}</span></header>{notificationsForCurrentUser.length ? <ul>{notificationsForCurrentUser.map((notification) => <li key={notification.id} className={notification.recipientUserId && !notification.readByUserIds?.includes(currentUserRecord.id) ? 'unread' : ''}><button type="button" onClick={() => openNotification(notification)}><strong>{notification.title}</strong><span>{notification.incidentId ? notification.incidentId : `${notification.contractNumber} · ${notification.customer}`}</span><small>{notification.workNotes || `Expired ${notification.expiryDate} · ${notification.recipientGroup}`}</small></button></li>)}</ul> : <p>No notifications.</p>}</div>}</div>
             <button className="profile" onClick={onLogout} title="Sign out">
               <span>{user.initials}</span>
               <div><strong>{user.name}</strong><small>{user.role}</small></div>
@@ -651,6 +779,7 @@ function Dashboard({ user, onLogout }) {
         </header>
         <section className="content">
           {searchOpen && <div className="search-panel"><Search size={18} /><input autoFocus placeholder="Search incidents, customers, contracts..." /><kbd>Esc</kbd></div>}
+          {notificationToasts.length > 0 && <aside className="notification-toast-stack" aria-live="polite">{notificationToasts.map((notification) => <button type="button" key={notification.id} onClick={() => openNotification(notification)}><Bell size={16} /><span><strong>{notification.title}</strong><small>{notification.workNotes}</small></span></button>)}</aside>}
           {renderPage()}
         </section>
       </main>
@@ -658,11 +787,80 @@ function Dashboard({ user, onLogout }) {
   )
 }
 
+const formFieldSelector = [
+  '.field',
+  '.incident-field',
+  '.customer-field',
+  '.user-config-grid label',
+  '.group-config-fields label',
+  '.asset-form-grid label',
+  '.product-record-editor label',
+  '.knowledge-form-sheet label',
+  '.settings-form-grid label',
+  '.report-dialog label',
+  'form label',
+].join(', ')
+
+const databaseColumnFromLabel = (label) => label
+  .replace(/\*/g, '')
+  .replace(/\([^)]*\)/g, '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^_|_$/g, '')
+
+function DatabaseColumnInspector() {
+  const [inspector, setInspector] = useState(null)
+
+  useEffect(() => {
+    const close = () => setInspector(null)
+    const handleContextMenu = (event) => {
+      const field = event.target.closest(formFieldSelector)
+      if (!field) return
+      const caption = field.matches('label')
+        ? field.querySelector(':scope > span')?.textContent || field.childNodes[0]?.textContent || ''
+        : field.querySelector(':scope > label, :scope > span')?.textContent || ''
+      const control = field.querySelector('input, select, textarea')
+      const column = field.dataset.dbColumn || control?.dataset.dbColumn || control?.name || databaseColumnFromLabel(caption)
+      if (!column) return
+      event.preventDefault()
+      setInspector({ column, x: event.clientX, y: event.clientY })
+    }
+    const handleKeyDown = (event) => { if (event.key === 'Escape') close() }
+    document.addEventListener('contextmenu', handleContextMenu)
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+      document.removeEventListener('click', close)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  if (!inspector) return null
+  return <div className="database-column-popover" role="status" style={{ left: Math.min(inspector.x, window.innerWidth - 236), top: Math.min(inspector.y, window.innerHeight - 72) }}><span>Database column</span><code>{inspector.column}</code></div>
+}
+
 /* ──────────────────────────────────────────
    Root App
    ────────────────────────────────────────── */
 export default function App() {
   const [user, setUser] = useState(null)
-  if (!user) return <LoginPage onLogin={setUser} />
-  return <Dashboard user={user} onLogout={() => setUser(null)} />
+  const [loginUsers, setLoginUsers] = useState([])
+  const [loginAssignmentGroups, setLoginAssignmentGroups] = useState([])
+  const [loginDirectoryReady, setLoginDirectoryReady] = useState(false)
+  useEffect(() => {
+    let active = true
+    Promise.all([recordApi.list('users'), recordApi.list('assignment_groups')])
+      .then(([storedUsers, storedGroups]) => {
+        if (!active) return
+        setLoginUsers(storedUsers.map((record) => record.payload))
+        setLoginAssignmentGroups(storedGroups.map((record) => record.payload))
+        setLoginDirectoryReady(true)
+      })
+      .catch((error) => console.warn('Unable to load demo login identities.', error))
+    return () => { active = false }
+  }, [])
+  if (!user) return <><LoginPage onLogin={setUser} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} /><DatabaseColumnInspector /></>
+  return <><Dashboard user={user} onLogout={() => setUser(null)} /><DatabaseColumnInspector /></>
 }

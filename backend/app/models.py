@@ -63,6 +63,18 @@ class ProcessConfigurationRecord(RecordMixin, Base):
     __tablename__ = "process_configurations"
 
 
+class EmailSettingsRecord(RecordMixin, Base):
+    __tablename__ = "email_settings"
+
+
+class EmailLogRecord(RecordMixin, Base):
+    __tablename__ = "email_logs"
+
+
+class OutboundEmailRuleRecord(RecordMixin, Base):
+    __tablename__ = "outbound_email_rules"
+
+
 class EntraConfiguration(Base):
     __tablename__ = "entra_configuration"
 

@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, ContractRecord, CustomerRecord, IncidentRecord, KnowledgeDocumentRecord, NotificationRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -25,6 +25,9 @@ ALLOWED_RESOURCES = {
     "audit_logs",
     "repair_executions",
     "process_configurations",
+    "email_settings",
+    "email_logs",
+    "outbound_email_rules",
 }
 RESOURCE_MODELS = {
     "customers": CustomerRecord,
@@ -39,6 +42,9 @@ RESOURCE_MODELS = {
     "audit_logs": AuditLogRecord,
     "repair_executions": RepairExecutionRecord,
     "process_configurations": ProcessConfigurationRecord,
+    "email_settings": EmailSettingsRecord,
+    "email_logs": EmailLogRecord,
+    "outbound_email_rules": OutboundEmailRuleRecord,
 }
 
 
@@ -61,7 +67,7 @@ def validate_resource(resource: str) -> str:
 def list_records(resource: str, database: Session = Depends(get_db)) -> dict[str, list[dict[str, Any]]]:
     validate_resource(resource)
     model = RESOURCE_MODELS[resource]
-    records = database.scalars(select(model).order_by(model.updated_at.desc())).all()
+    records = database.scalars(select(model).order_by(model.record_id)).all()
     return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
 
 
