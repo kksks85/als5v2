@@ -167,7 +167,7 @@ const incidentComponentColumns = [
   ['product_serial_number', 'Product serial number'], ['part_number', 'Part number'], ['sap_part_number', 'SAP part number'], ['materialDescription', 'Material description'], ['batch_or_po_number', 'Batch no / PO no'], ['materialSerialNumber', 'Material serial no'], ['weight_in_grams', 'Weight in grams'], ['required_quantity', 'Required quantity'], ['unit_of_measurement', 'Unit of measurement'], ['subsystem', 'Subsystem'],
 ]
 
-export default function IncidentsPage({ currentUser, assignmentGroups, users, customers, contracts, repairExecutions, processes, products, productAssets, incidents, setIncidents, setProducts, onAddCustomerContact, onCreateNotifications, onEditModeChange, initialDrill }) {
+export default function IncidentsPage({ currentUser, assignmentGroups, users, customers, contracts, repairExecutions, processes, products, productAssets, incidents, setIncidents, setProducts, onAddCustomerContact, onCreateNotifications, onCreateAssignmentNotifications, onEditModeChange, initialDrill }) {
   const [showForm, setShowForm] = useState(false)
   const [selectedIncident, setSelectedIncident] = useState(null)
   const drilledIncidentIds = useMemo(() => new Set(initialDrill?.incidentIds || []), [initialDrill])
@@ -260,6 +260,7 @@ export default function IncidentsPage({ currentUser, assignmentGroups, users, cu
     const incident = { id, opened: new Date().toISOString(), title: form.shortDescription, priority: form.priority, state: 'In progress', stage: registeredStage.status, status: registeredStage.status, repairExecution: 'Incident Registration', group: registeredStage.assignmentGroup, assignmentGroup: registeredStage.assignmentGroup, assignedTo: form.assignedTo, favorite: false, attachments: form.attachments || [], customer: form.customer, contract: form.contract, requestor: form.requestor, contact: form.contact, warranty: form.warranty, serialNumber: form.serialNumber, system: form.system, category: form.category, subsystem: form.subsystem, component: form.component, materialSerialNumber: form.materialSerialNumber, occurrencePhase: form.occurrencePhase }
     await recordApi.bulkUpsert('incidents', [{ record_id: id, payload: incident }])
     setIncidents((current) => [incident, ...current])
+    onCreateAssignmentNotifications(incident, incident.assignmentGroup)
     setPage(1)
     setShowForm(false)
     window.setTimeout(() => { void logIncidentRegistrationEmails(incident).catch(() => {}) }, 0)
@@ -273,11 +274,14 @@ export default function IncidentsPage({ currentUser, assignmentGroups, users, cu
   }
 
   if (showForm) return <NewIncidentForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} processes={processes} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} onCancel={() => setShowForm(false)} onSubmit={createIncident} />
-  if (selectedIncident) return <IncidentDetailForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} currentUser={currentUser} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} incident={selectedIncident} initialActiveTab={initialDrill?.activeTab} onCancel={() => setSelectedIncident(null)} onSave={async (updates) => {
+  if (selectedIncident) return <IncidentDetailForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} currentUser={currentUser} products={products} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} incident={selectedIncident} initialActiveTab={initialDrill?.activeTab} onCancel={() => setSelectedIncident(null)} onSave={async (updates) => {
     const { componentProductUpdates = [], mentionNotifications = [], ...incidentUpdates } = updates
     const updatedIncident = { ...selectedIncident, ...incidentUpdates }
+    const previousAssignmentGroup = selectedIncident.assignmentGroup || selectedIncident.group || ''
+    const assignmentGroupChanged = Boolean(updatedIncident.assignmentGroup && updatedIncident.assignmentGroup !== previousAssignmentGroup)
     await recordApi.bulkUpsert('incidents', [{ record_id: updatedIncident.id, payload: updatedIncident }])
     if (mentionNotifications.length) onCreateNotifications(mentionNotifications)
+    if (assignmentGroupChanged) onCreateAssignmentNotifications(updatedIncident, updatedIncident.assignmentGroup)
     if (componentProductUpdates.length) setProducts((current) => current.map((product) => {
       const update = componentProductUpdates.find((item) => item.productSerialNumber === product.product_serial_number && item.partNumber === product.part_number && item.subsystem === product.subsystems)
       if (!update) return product
@@ -379,6 +383,21 @@ function IncidentComponentsTable({ components, componentSerialNumbers, onChange,
   return <div className="incident-work-panel incident-components-panel"><div className="incident-components-summary"><div><strong>{serialNumber}</strong><span>{subsystem}</span></div><small>{components.length} component{components.length === 1 ? '' : 's'} · Only Material Serial No is editable</small></div><div className="incident-components-table"><table><thead><tr>{incidentComponentColumns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{components.map((component) => <tr key={componentKey(component)}>{incidentComponentColumns.map(([key]) => <td key={key}>{key === 'materialSerialNumber' ? <input aria-label={`Material serial number for ${component.materialDescription}`} disabled={readOnly} value={componentSerialNumbers[componentKey(component)] ?? component.materialSerialNumber} onChange={(event) => onChange(component, event.target.value)} /> : component[key] || '--'}</td>)}</tr>)}</tbody></table></div></div>
 }
 
+function ReplacementPartsPanel({ enabled, onToggle, parts, components, approval, onAdd, onRemove, onChange, onSubmit, canSubmit }) {
+  const locked = approval?.status === 'Pending' || approval?.status === 'Approved'
+  const approved = approval?.status === 'Approved'
+  return <section className="replacement-parts-panel">
+    <label className="repair-completed-check"><input type="checkbox" checked={enabled} onChange={(event) => onToggle(event.target.checked)} /> <span>Part needs replacement</span></label>
+    {enabled && <>
+      <div className={`replacement-request-card ${approval?.status?.toLowerCase() || 'draft'}`}>
+        <header><div><strong>Replacement components</strong><span>{approval?.status === 'Pending' ? 'Awaiting Advisory Group decision' : approved ? 'Approved - enter replacement serial numbers' : 'Build the request before sending for approval'}</span></div><b>{approval?.status || 'Draft'}</b></header>
+        <div className="replacement-part-list">{parts.length ? parts.map((part, index) => <article key={part.id}><header><strong>Component {index + 1}</strong><button type="button" className="icon-button danger" disabled={locked} title="Remove replacement component" onClick={() => onRemove(part.id)}><Trash2 size={14} /></button></header><div className="replacement-part-fields"><label><span>Component name</span><select value={part.componentKey} disabled={locked} onChange={(event) => onChange(part.id, { componentKey: event.target.value })}><option value="">Select component</option>{components.map((component) => <option key={componentKey(component)} value={componentKey(component)}>{component.materialDescription}</option>)}</select></label><label><span>Part number</span><output>{part.partNumber || '--'}</output></label><label><span>Current serial number</span><output>{part.currentSerialNumber || '--'}</output></label><label><span>New serial number</span><input value={part.newSerialNumber} disabled={!approved} onChange={(event) => onChange(part.id, { newSerialNumber: event.target.value })} placeholder={approved ? 'Enter new serial number' : 'Available after approval'} /></label></div></article>) : <div className="replacement-part-empty">No replacement components added. Use <strong>Add component</strong> to begin.</div>}</div>
+        {!locked && <footer className="replacement-parts-actions"><button type="button" className="compact-button secondary" disabled={!components.length} onClick={onAdd}>Add component</button><button type="button" className="incident-next-stage-button" disabled={!canSubmit} onClick={onSubmit}>Send for Advisory approval</button></footer>}
+      </div>
+    </>}
+  </section>
+}
+
 function FormSection({ icon: Icon, title, headerAction, children }) { return <section className="incident-form-section"><h2><span><Icon size={16} /> {title}</span>{headerAction}</h2><div className="incident-form-grid">{children}</div></section> }
 function Field({ label, required, hint, error, children }) { return <label className={`incident-field ${error ? 'has-error' : ''}`}><span>{required && <em>*</em>}{label}</span>{children}{error ? <small className="incident-field-error">{error}</small> : hint ? <small>{hint}</small> : null}</label> }
 function WorkNotesField({ value, onChange, users, groups, inputRef }) {
@@ -464,7 +483,7 @@ function CameraCaptureDialog({ onCapture, onClose, onFallback }) {
   return <div className="camera-capture-backdrop"><section className="camera-capture-dialog" role="dialog" aria-modal="true" aria-label="Capture incident image"><header><div><h2>Capture image</h2><p>Use the device camera to attach a photograph to this incident.</p></div><button type="button" onClick={onClose} aria-label="Close camera"><X size={17} /></button></header>{error ? <div className="camera-error"><p>{error}</p><button type="button" className="compact-button secondary" onClick={onFallback}>Choose image</button></div> : <video ref={video} autoPlay playsInline muted />}<footer><button type="button" className="incident-cancel-button" onClick={onClose}>Cancel</button>{!error && <button type="button" className="incident-submit-button" onClick={capture}><Camera size={15} /> Capture</button>}</footer></section></div>
 }
 
-function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExecutions, processes, currentUser, productAssets, serialNumberRecords, users, incident, initialActiveTab, onCancel, onSave }) {
+function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExecutions, processes, currentUser, products, productAssets, serialNumberRecords, users, incident, initialActiveTab, onCancel, onSave }) {
   const initialCustomer = incident.id.includes('-IAF-') ? 'Indian Air Force' : 'Indian Army'
   const initialProfile = findCustomerProfile(customers, contracts, incident.customer || initialCustomer)
   const initialContract = initialProfile?.contracts.find((contract) => contract.number === incident.contract) || initialProfile?.contracts[0]
@@ -476,11 +495,16 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [stageConfirmationOpen, setStageConfirmationOpen] = useState(false)
+  const [manualNextAssignmentGroup, setManualNextAssignmentGroup] = useState('')
   const [processStepsOpen, setProcessStepsOpen] = useState(false)
   const [approvalDecisionOpen, setApprovalDecisionOpen] = useState(false)
   const [approvalDecisionReason, setApprovalDecisionReason] = useState('')
   const [form, setForm] = useState({
     repairExecution: defaultRepairExecution, status: defaultStatus, customer: incident.customer || initialCustomer, contract: incident.contract || initialContract?.number || '', requestor: incident.requestor || initialProfile?.contacts[0]?.name || '', contact: incident.contact || contactValue(initialProfile?.contacts[0]), occurrencePhase: incident.occurrencePhase || '', priority: incident.priority || 'Medium', assignmentGroup: incident.assignmentGroup || incident.group || '', assignedTo: incident.assignedTo || '', system: initialContract?.system || incident.system || 'SRLM', category: incident.category || 'Loitering Munition (LM)', subsystem: incident.subsystem || 'Airframe', serialNumber: incident.serialNumber || '', component: incident.component || '', materialSerialNumber: incident.materialSerialNumber || 'Not Applicable', componentSerialNumbers: incident.componentSerialNumbers || {}, warranty: initialContract?.warranty || incident.warranty || '', lastServiced: incident.lastServiced || '', shortDescription: incident.title || '', description: incident.description || incident.title || '', workNotes: '', repairCompleted: Boolean(incident.repairCompleted), resolutionDetails: incident.resolutionDetails || '', groupApproval: incident.groupApproval || null, attachments: incident.attachments || [],
+  })
+  const [replacementDraft, setReplacementDraft] = useState({
+    partReplacementRequired: Boolean(incident.partReplacementRequired),
+    replacementParts: Array.isArray(incident.replacementParts) ? incident.replacementParts : [],
   })
   const repairExecutionOptions = repairExecutions.filter((execution) => execution.active || execution.name === form.repairExecution).map((execution) => execution.name)
   const initialForm = useRef(form)
@@ -508,15 +532,16 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const selectRepairExecution = (repairExecution) => {
     const stages = getProcessStages(repairExecution, processes)
     const initialStage = stages[0]
+    const requiresSiteTaslRouting = form.status === 'Advisory Group Review' && repairExecution === 'Repair at Site - TASL'
     setSaved(false)
     setForm((current) => {
-      const assignmentGroup = initialStage?.assignmentGroup || current.assignmentGroup
+      const assignmentGroup = requiresSiteTaslRouting ? '' : initialStage?.assignmentGroup || current.assignmentGroup
       return {
         ...current,
         repairExecution,
         status: initialStage?.status || '',
         assignmentGroup,
-        assignedTo: assignmentGroup === current.assignmentGroup ? current.assignedTo : '',
+        assignedTo: '',
       }
     })
   }
@@ -536,9 +561,9 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const stages = getProcessStages(form.repairExecution, processes)
   const currentStage = getProcessStage(form.repairExecution, form.status, processes)
   const nextStage = getNextProcessStage(form.repairExecution, form.status, processes)
-  const isFactoryRepairActivity = /^repair at factory\s*-\s*(in-house|vendor)$/i.test(form.repairExecution)
-    && /\b(repair|work) in progress\b/i.test(form.status)
-  const isPostRepairQuality = /^post repair (quality (check|review)|qc)$/i.test(form.status.trim())
+  const isRepairWorkInProgress = isRepairExecution && /\b(repair|work) in progress\b/i.test(form.status)
+  const isSiteTaslWorkInProgress = isRepairWorkInProgress && form.repairExecution === 'Repair at Site - TASL'
+  const isPostRepairQuality = /^post repair (quality (check|review)|qc|review)$/i.test(form.status.trim())
   const isPreDispatchApproval = /^pre[- ]?dispatch approval$/i.test(form.status.trim())
   const groupApprovalPending = isPreDispatchApproval && form.groupApproval?.status !== 'Approved'
   const assignedToOptions = groupMemberNames(assignmentGroups, users, form.assignmentGroup)
@@ -547,7 +572,9 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const canAssignToMe = Boolean(currentUserName && assignedToOptions.includes(currentUserName))
   const currentAssignmentGroup = assignmentGroups.find((group) => group.name === form.assignmentGroup)
   const isCurrentGroupMember = currentAssignmentGroup?.manager === currentUser.name || currentAssignmentGroup?.memberIds?.includes(currentUserRecord?.id)
-  const hasCompletedFactoryRepair = form.repairCompleted && Boolean(form.resolutionDetails.trim())
+  const hasCompletedRepair = form.repairCompleted && Boolean(form.resolutionDetails.trim())
+  const requiresSiteTaslRouting = initialForm.current.status === 'Advisory Group Review' && form.repairExecution === 'Repair at Site - TASL'
+  const hasValidSiteTaslRouting = !requiresSiteTaslRouting || Boolean(form.assignmentGroup && form.assignedTo && assignedToOptions.includes(form.assignedTo))
   const canApproveGroupRequest = groupApprovalPending && form.groupApproval?.members?.some((member) => member.name === currentUserName && member.status === 'Pending')
   const eligibleSerialNumberRecords = serialRecordsForCustomerContract(serialNumberRecords, productAssets, form.customer, form.contract)
   const components = componentOptions(serialNumberRecords, form.serialNumber, form.subsystem)
@@ -555,15 +582,107 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     .filter((component) => component.subsystem === form.subsystem) || [], [form.serialNumber, form.subsystem, serialNumberRecords])
   const componentsByKey = useMemo(() => new Map(incidentComponents.map((component) => [componentKey(component), component])), [incidentComponents])
   const updateComponentSerialNumber = (component, materialSerialNumber) => update('componentSerialNumbers', { ...form.componentSerialNumbers, [componentKey(component)]: materialSerialNumber })
+  const currentSerialForComponent = (component) => form.componentSerialNumbers[componentKey(component)] ?? component.materialSerialNumber ?? 'Not Applicable'
+  const togglePartReplacementRequired = (checked) => {
+    setSaved(false)
+    setReplacementDraft((current) => ({ ...current, partReplacementRequired: checked, replacementParts: checked ? current.replacementParts : [] }))
+  }
+  const addReplacementPart = () => {
+    const firstComponent = incidentComponents[0]
+    if (!firstComponent) return
+    setReplacementDraft((current) => ({
+      ...current,
+      replacementParts: [...current.replacementParts, {
+        id: `replacement-${Date.now()}-${Math.random()}`,
+        componentKey: componentKey(firstComponent),
+        materialDescription: firstComponent.materialDescription,
+        partNumber: firstComponent.part_number,
+        currentSerialNumber: currentSerialForComponent(firstComponent),
+        newSerialNumber: '',
+      }],
+    }))
+  }
+  const removeReplacementPart = (id) => setReplacementDraft((current) => ({ ...current, replacementParts: current.replacementParts.filter((part) => part.id !== id) }))
+  const updateReplacementPart = (id, updates) => setReplacementDraft((current) => ({
+    ...current,
+    replacementParts: current.replacementParts.map((part) => {
+      if (part.id !== id) return part
+      const next = { ...part, ...updates }
+      if (updates.componentKey) {
+        const component = componentsByKey.get(updates.componentKey)
+        if (component) {
+          next.materialDescription = component.materialDescription
+          next.partNumber = component.part_number
+          next.currentSerialNumber = currentSerialForComponent(component)
+          next.newSerialNumber = ''
+        }
+      }
+      return next
+    }),
+  }))
+  const replacementApproval = form.groupApproval?.approvalType === 'replacement-parts' ? form.groupApproval : null
+  const replacementApprovalPending = replacementApproval?.status === 'Pending'
+  const replacementApprovalApproved = replacementApproval?.status === 'Approved'
+  const canSubmitReplacementApproval = isSiteTaslWorkInProgress
+    && replacementDraft.partReplacementRequired
+    && !replacementApprovalPending
+    && replacementDraft.replacementParts.length > 0
+  const submitReplacementApproval = () => {
+    if (!canSubmitReplacementApproval) return
+    const advisoryGroup = assignmentGroups.find((group) => group.name === 'Advisory Group')
+    const approvalMembers = advisoryGroup ? [...new Set([
+      ...groupMemberNames(assignmentGroups, users, advisoryGroup.name),
+      ...users.filter((user) => user.status === 'Active' && user.name === advisoryGroup.manager).map((user) => user.name),
+    ])] : []
+    const groupApproval = {
+      id: `replacement-approval-${incident.id}-${Date.now()}`,
+      approvalType: 'replacement-parts',
+      status: 'Pending',
+      assignmentGroup: advisoryGroup?.name || 'Advisory Group',
+      requestedAt: new Date().toISOString(),
+      requestedBy: currentUser.name || currentUser.email,
+      members: approvalMembers.map((name) => ({ name, status: 'Pending' })),
+      parts: replacementDraft.replacementParts.map((part) => ({ ...part })),
+    }
+    void saveChanges({ ...form, groupApproval })
+  }
   const selectSubsystem = (subsystem) => { setSaved(false); setForm((current) => ({ ...current, subsystem, component: '', materialSerialNumber: 'Not Applicable' })) }
   const selectComponent = (component) => setForm((current) => ({ ...current, component, materialSerialNumber: materialSerialNumberFor(serialNumberRecords, current.serialNumber, current.subsystem, component) }))
   const saveChanges = async (nextForm = form, journalEntries = []) => {
+    if (initialForm.current.status === 'Advisory Group Review' && nextForm.repairExecution === 'Repair at Site - TASL' && (!nextForm.assignmentGroup || !nextForm.assignedTo || !groupMemberNames(assignmentGroups, users, nextForm.assignmentGroup).includes(nextForm.assignedTo))) {
+      setSaveError('Select an Assignment Group and an active Assigned To user before saving Repair at Site - TASL.')
+      return false
+    }
     if (nextForm.status === 'Advisory Group Review' && nextForm.assignedTo && !groupMemberNames(assignmentGroups, users, nextForm.assignmentGroup).includes(nextForm.assignedTo)) {
       setSaveError('Assigned To must be an active member of the current Advisory Group.')
       return false
     }
+    const approvedReplacementParts = replacementDraft.partReplacementRequired && replacementApprovalApproved
+      ? replacementDraft.replacementParts.map((part) => ({ ...part, newSerialNumber: part.newSerialNumber.trim() }))
+      : []
+    if (approvedReplacementParts.some((part) => !part.newSerialNumber)) {
+      setSaveError('Provide a new serial number for every approved replacement part before saving.')
+      return false
+    }
+    const normalizedReplacementSerial = (value) => String(value).trim().toUpperCase()
+    const duplicateRequestSerial = approvedReplacementParts.find((part, index) => approvedReplacementParts.some((other, otherIndex) => otherIndex !== index && normalizedReplacementSerial(other.newSerialNumber) === normalizedReplacementSerial(part.newSerialNumber)))
+    if (duplicateRequestSerial) {
+      setSaveError(`Material serial number ${duplicateRequestSerial.newSerialNumber} is selected more than once in this replacement request.`)
+      return false
+    }
+    const existingSerialCollision = approvedReplacementParts.map((part) => {
+      const component = componentsByKey.get(part.componentKey)
+      const matchingProduct = products.find((product) => normalizedReplacementSerial(product.material_serial_number) === normalizedReplacementSerial(part.newSerialNumber)
+        && !(product.product_serial_number === nextForm.serialNumber && product.part_number === component?.part_number && product.subsystems === component?.subsystem))
+      return matchingProduct ? { part, matchingProduct } : null
+    }).find(Boolean)
+    if (existingSerialCollision) {
+      const { part, matchingProduct } = existingSerialCollision
+      setSaveError(`Material serial number ${part.newSerialNumber} is already assigned to ${matchingProduct.product_serial_number} / ${matchingProduct.material_description || matchingProduct.part_number}. Enter a unique serial number.`)
+      return false
+    }
     const values = {
-      title: nextForm.shortDescription, description: nextForm.description, customer: nextForm.customer, contract: nextForm.contract, requestor: nextForm.requestor, contact: nextForm.contact, occurrencePhase: nextForm.occurrencePhase, priority: nextForm.priority, group: nextForm.assignmentGroup, assignmentGroup: nextForm.assignmentGroup, assignedTo: nextForm.assignedTo, attachments: nextForm.attachments, repairExecution: nextForm.repairExecution, status: nextForm.status, stage: nextForm.status, serialNumber: nextForm.serialNumber, system: nextForm.system, category: nextForm.category, subsystem: nextForm.subsystem, component: nextForm.component, materialSerialNumber: nextForm.materialSerialNumber, componentSerialNumbers: nextForm.componentSerialNumbers, warranty: nextForm.warranty, lastServiced: nextForm.lastServiced, workNotes: nextForm.workNotes, repairCompleted: nextForm.repairCompleted, resolutionDetails: nextForm.resolutionDetails, groupApproval: nextForm.groupApproval,
+      title: nextForm.shortDescription, description: nextForm.description, customer: nextForm.customer, contract: nextForm.contract, requestor: nextForm.requestor, contact: nextForm.contact, occurrencePhase: nextForm.occurrencePhase, priority: nextForm.priority, group: nextForm.assignmentGroup, assignmentGroup: nextForm.assignmentGroup, assignedTo: nextForm.assignedTo, attachments: nextForm.attachments, repairExecution: nextForm.repairExecution, status: nextForm.status, stage: nextForm.status, serialNumber: nextForm.serialNumber, system: nextForm.system, category: nextForm.category, subsystem: nextForm.subsystem, component: nextForm.component, materialSerialNumber: nextForm.materialSerialNumber, componentSerialNumbers: nextForm.componentSerialNumbers, warranty: nextForm.warranty, lastServiced: nextForm.lastServiced, workNotes: nextForm.workNotes, repairCompleted: nextForm.repairCompleted, resolutionDetails: nextForm.resolutionDetails, groupApproval: nextForm.groupApproval, partReplacementRequired: replacementDraft.partReplacementRequired, replacementParts: replacementDraft.replacementParts,
     }
     const labels = { title: 'Short description', description: 'Description', customer: 'Customer', contract: 'Customer contract', requestor: 'Requestor', contact: 'Requestor contact', occurrencePhase: 'Occurrence phase', priority: 'Priority', assignmentGroup: 'Assigned group', assignedTo: 'Assigned to', repairExecution: 'Repair execution', status: 'Status', serialNumber: 'Product serial number', system: 'System type', category: 'Product category', subsystem: 'Sub-system', component: 'Component', materialSerialNumber: 'Material serial number', warranty: 'Warranty status', lastServiced: 'Last serviced on', workNotes: 'Work notes', repairCompleted: 'Repair completed', resolutionDetails: 'Resolution notes', groupApproval: 'Group approval', attachments: 'Attachments' }
     const previousValues = { ...initialForm.current, title: initialForm.current.shortDescription, group: initialForm.current.assignmentGroup, assignmentGroup: initialForm.current.assignmentGroup }
@@ -584,6 +703,19 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
       const component = componentsByKey.get(key)
       return component ? { productSerialNumber: nextForm.serialNumber, partNumber: component.part_number, subsystem: component.subsystem, next: value || 'Not Applicable' } : null
     }).filter(Boolean)
+    const replacementProductUpdates = replacementDraft.partReplacementRequired && replacementApprovalApproved
+      ? replacementDraft.replacementParts.map((part) => {
+        const component = componentsByKey.get(part.componentKey)
+        const next = part.newSerialNumber.trim()
+        if (!component || !next || next === currentSerialForComponent(component)) return null
+        changes.push({ field: `Replacement serial number: ${component.materialDescription}`, previous: currentSerialForComponent(component), next })
+        return { productSerialNumber: nextForm.serialNumber, partNumber: component.part_number, subsystem: component.subsystem, componentKey: part.componentKey, next, replacement: true }
+      }).filter(Boolean)
+      : []
+    componentProductUpdates.push(...replacementProductUpdates)
+    replacementProductUpdates.forEach((update) => {
+      values.componentSerialNumbers = { ...values.componentSerialNumbers, [update.componentKey]: update.next }
+    })
     const auditLog = [...(incident.auditLog || [])]
     if (changes.length) auditLog.push({ id: `${Date.now()}-${Math.random()}`, assignedGroup: nextForm.assignmentGroup, updatedBy: currentUser.name || currentUser.email, updatedAt: new Date().toISOString(), changes })
     auditLog.push(...journalEntries)
@@ -611,11 +743,13 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
       return
     }
     setSaveError('')
+    setManualNextAssignmentGroup(nextStage?.assignmentGroup || '')
     setStageConfirmationOpen(true)
   }
   const moveToNextStage = async () => {
-    if (!nextStage?.assignmentGroup) return
-    const approvalGroup = assignmentGroups.find((group) => group.name === nextStage.assignmentGroup)
+    const nextAssignmentGroup = nextStage?.assignmentGroup || manualNextAssignmentGroup
+    if (!nextStage || !nextAssignmentGroup) return
+    const approvalGroup = assignmentGroups.find((group) => group.name === nextAssignmentGroup)
     const approvalMembers = approvalGroup ? [...new Set([
       ...groupMemberNames(assignmentGroups, users, approvalGroup.name),
       ...users.filter((user) => user.status === 'Active' && user.name === approvalGroup.manager).map((user) => user.name),
@@ -623,15 +757,16 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     const groupApproval = isPostRepairQuality ? {
       id: `group-approval-${incident.id}-${Date.now()}`,
       status: 'Pending',
-      assignmentGroup: nextStage.assignmentGroup,
+      assignmentGroup: nextAssignmentGroup,
       requestedAt: new Date().toISOString(),
       requestedBy: currentUser.name || currentUser.email,
       members: approvalMembers.map((name) => ({ name, status: 'Pending' })),
     } : form.groupApproval
-    const nextAssignmentGroup = isPostRepairQuality ? groupApproval.assignmentGroup : nextStage.assignmentGroup
-    const nextForm = { ...form, status: nextStage.status, assignmentGroup: nextAssignmentGroup, assignedTo: nextAssignmentGroup !== form.assignmentGroup ? '' : form.assignedTo, groupApproval }
+    const assignedGroup = isPostRepairQuality ? groupApproval.assignmentGroup : nextAssignmentGroup
+    const nextForm = { ...form, status: nextStage.status, assignmentGroup: assignedGroup, assignedTo: '', groupApproval }
     if (await saveChanges(nextForm)) {
       setForm({ ...nextForm, workNotes: '' })
+      setManualNextAssignmentGroup('')
       setStageConfirmationOpen(false)
     }
   }
@@ -679,32 +814,33 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     setApprovalDecisionOpen(false)
     setApprovalDecisionReason('')
   }
+  const currentStageAssignmentIsConfigured = Boolean(currentStage?.assignmentGroup)
   const canMoveToNextStage = (isRegistered || isRepairExecution)
-    && currentStage?.assignmentGroup === form.assignmentGroup
+    && Boolean(form.assignmentGroup)
     && isCurrentGroupMember
-    && Boolean(nextStage?.assignmentGroup)
-  const canAdvanceToNextStage = canMoveToNextStage && (!isFactoryRepairActivity || hasCompletedFactoryRepair) && !groupApprovalPending
+    && Boolean(nextStage)
+  const canAdvanceToNextStage = canMoveToNextStage && (!isRepairWorkInProgress || hasCompletedRepair) && !groupApprovalPending
   const nextStageActionLabel = nextStage ? `Move to ${nextStage.status}` : ''
   const hasUnsavedChanges = JSON.stringify(form) !== JSON.stringify(initialForm.current)
-  const canSave = isFactoryRepairActivity || hasUnsavedChanges
+  const canSave = (isRepairWorkInProgress || hasUnsavedChanges) && hasValidSiteTaslRouting
 
   return <form className="incident-detail-page" onSubmit={async (event) => { event.preventDefault(); if (canSave) await saveChanges() }}>
-    <header className="incident-form-header"><div><button type="button" className="incident-back-button" onClick={onCancel}><ArrowLeft size={15} /> Incidents</button><p className="incident-detail-kicker">Incident</p><h1>{incident.id}</h1></div><div className="incident-form-actions"><button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button>{canMoveToNextStage && <button type="button" className="incident-next-stage-button" disabled={!canAdvanceToNextStage} title={isFactoryRepairActivity && !hasCompletedFactoryRepair ? 'Complete Repair Completed and Resolution Notes before progressing.' : undefined} onClick={openStageTransition}>{nextStageActionLabel}</button>}<button type="submit" className="incident-submit-button" disabled={!canSave}>Save</button></div></header>
+    <header className="incident-form-header"><div><button type="button" className="incident-back-button" onClick={onCancel}><ArrowLeft size={15} /> Incidents</button><p className="incident-detail-kicker">Incident</p><h1>{incident.id}</h1></div><div className="incident-form-actions"><button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button>{canMoveToNextStage && <button type="button" className="incident-next-stage-button" disabled={!canAdvanceToNextStage} title={isRepairWorkInProgress && !hasCompletedRepair ? 'Complete Repair Completed and Resolution Notes before progressing.' : undefined} onClick={openStageTransition}>{nextStageActionLabel}</button>}<button type="submit" className="incident-submit-button" disabled={!canSave}>Save</button></div></header>
     <section className="incident-detail-sheet">
       <WorkflowProgress stages={stages} currentStatus={form.status} />
       <div className="incident-detail-content">
         <section className="incident-detail-section"><header className="incident-section-header"><h2>Incident details</h2><button type="button" className="process-steps-link" onClick={() => setProcessStepsOpen(true)}><ListChecks size={14} /> Process steps</button></header><div className="incident-form-grid"><Field label="Incident number"><div className="incident-auto-field">{incident.id}</div></Field><Field label="Created on"><div className="incident-auto-field">{openedDateLabel(incident.opened)}</div></Field><Field label="Repair execution"><SelectField value={form.repairExecution} onChange={selectRepairExecution} options={repairExecutionOptions} placeholder="Select repair execution" disabled={(isRegistered || repairExecutionDetailsReadOnly) && !isAdvisoryReview} /></Field><Field label="Status"><SelectField value={form.status} onChange={(value) => update('status', value)} options={stages.map((stage) => stage.status)} placeholder="Select status" disabled={isRegistered || repairExecutionDetailsReadOnly} /></Field></div></section>
         <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Customer</h2><div className="incident-form-grid"><Field label="Customer name"><SelectField value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Customer contract"><SelectField value={form.contract} onChange={selectContract} options={selectedCustomer?.contracts.map((contract) => contract.number) || []} placeholder="Select customer first" /></Field><Field label="Requestor name"><RequestorSelect customer={selectedCustomer} value={form.requestor} onChange={selectRequestor} /></Field><Field label="Requestor contact"><input value={form.contact} readOnly placeholder="Auto-filled from requestor" /></Field></div></section></fieldset>
-        <section className="incident-detail-section"><h2>Incident classification</h2><div className="incident-form-grid"><Field label="Occurrence phase"><SelectField value={form.occurrencePhase} onChange={(value) => setForm((current) => ({ ...current, occurrencePhase: value, priority: value === 'In Flight' ? 'High' : current.priority }))} options={['In Flight', 'Ground Operations']} placeholder="Select occurrence phase" disabled={repairExecutionDetailsReadOnly} /></Field>{field('Priority', 'priority', 'Select priority', ['Critical', 'High', 'Medium', 'Low'])}<Field label="Assignment group"><SelectField value={form.assignmentGroup} onChange={selectAssignmentGroup} options={assignmentGroupOptions} placeholder="Select assignment group" /></Field><Field label="Assigned to"><SelectField value={form.assignedTo} onChange={(value) => update('assignedTo', value)} options={assignedToOptions} placeholder={form.assignmentGroup ? 'Select group member' : 'Select assignment group first'} /><button type="button" className="compact-button secondary" disabled={!canAssignToMe || form.assignedTo === currentUserName} onClick={() => update('assignedTo', currentUserName)}>Assign to me</button></Field></div></section>
+        <section className="incident-detail-section"><h2>Incident classification</h2><div className="incident-form-grid"><Field label="Occurrence phase"><SelectField value={form.occurrencePhase} onChange={(value) => setForm((current) => ({ ...current, occurrencePhase: value, priority: value === 'In Flight' ? 'High' : current.priority }))} options={['In Flight', 'Ground Operations']} placeholder="Select occurrence phase" disabled={repairExecutionDetailsReadOnly} /></Field>{field('Priority', 'priority', 'Select priority', ['Critical', 'High', 'Medium', 'Low'])}<Field label="Assignment group" required={!currentStageAssignmentIsConfigured || requiresSiteTaslRouting}><SelectField value={form.assignmentGroup} onChange={selectAssignmentGroup} options={assignmentGroupOptions} placeholder="Select assignment group" /></Field><Field label="Assigned to" required={requiresSiteTaslRouting}><SelectField value={form.assignedTo} onChange={(value) => update('assignedTo', value)} options={assignedToOptions} placeholder={form.assignmentGroup ? 'Select group member' : 'Select assignment group first'} /><button type="button" className="compact-button secondary" disabled={!canAssignToMe || form.assignedTo === currentUserName} onClick={() => update('assignedTo', currentUserName)}>Assign to me</button></Field></div></section>
         <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Product details</h2><div className="incident-form-grid"><SerialNumberReference records={eligibleSerialNumberRecords} value={form.serialNumber} onChange={selectSerialNumber} disabled={repairExecutionDetailsReadOnly || !form.customer || !form.contract} placeholder={form.contract ? 'Search serial number assigned to this contract' : 'Select customer and contract first'} hint={form.contract ? `${eligibleSerialNumberRecords.length} serial number${eligibleSerialNumberRecords.length === 1 ? '' : 's'} assigned to this customer contract` : 'Select customer and contract to view eligible serial numbers'} /><LookupField label="Product category" value={form.category} /><LookupField label="System type" value={form.system} /><SubsystemReference serialNumber={form.serialNumber} value={form.subsystem} records={serialNumberRecords} onChange={selectSubsystem} /><Field label="Component"><SelectField value={form.component} onChange={selectComponent} options={components} placeholder={form.subsystem ? 'Select material description' : 'Select sub-system first'} /></Field><Field label="Material serial number"><input value={form.materialSerialNumber} onChange={(event) => update('materialSerialNumber', event.target.value)} placeholder="Not Applicable" /></Field></div></section></fieldset>
         <section className="incident-detail-section"><h2>Service history</h2><div className="incident-form-grid">{field('Warranty status', 'warranty', 'Active/Expired/Expiring Soon')}{field('Last serviced on', 'lastServiced', 'YYYY-MM-DD')}</div></section>
-        <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Issue description</h2><div className="incident-form-grid">{field('Short description', 'shortDescription', 'Short description')}<Field label="Description"><textarea value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="Description" rows="4" /></Field></div><AttachmentSection attachments={form.attachments} onChange={(attachments) => update('attachments', attachments)} /></section></fieldset>
-        <section className="incident-work-area"><div className="incident-work-tabs">{['Notes', 'Components', 'Resolution'].map((tab) => <button type="button" key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div>{activeTab === 'Notes' && <div className="incident-work-panel"><WorkNotesField value={form.workNotes} onChange={(value) => update('workNotes', value)} users={users} groups={assignmentGroups} inputRef={workNotesInput} />{isPreDispatchApproval && form.groupApproval && <section className="group-approval-panel"><h3>{form.groupApproval.assignmentGroup} approval</h3><p>{form.groupApproval.status === 'Approved' ? `Approved by ${form.groupApproval.approvedBy}.` : `Pending approval from ${form.groupApproval.assignmentGroup} (${form.groupApproval.members.filter((member) => member.status === 'Pending').length} member${form.groupApproval.members.filter((member) => member.status === 'Pending').length === 1 ? '' : 's'}).`}</p>{canApproveGroupRequest && <button type="button" className="incident-next-stage-button" onClick={() => setApprovalDecisionOpen(true)}>Approve group request</button>}</section>}<details><summary>Record journal</summary>{(incident.auditLog || []).length ? <ol className="incident-journal">{[...incident.auditLog].reverse().map((entry) => <li key={entry.id}><article><header><div><strong>{entry.updatedBy || 'System'}</strong><span>Updated record</span></div><time>{openedDateLabel(entry.updatedAt)}</time></header><dl><div><dt>Assigned group</dt><dd>{entry.assignedGroup || '--'}</dd></div>{entry.changes.map((change, index) => <div key={`${change.field}-${index}`}><dt>{change.field}</dt><dd><s>{String(change.previous || '--')}</s><i>to</i><b>{String(change.next || '--')}</b></dd></div>)}</dl></article></li>)}</ol> : <p>No journal entries have been recorded.</p>}</details></div>}{activeTab === 'Components' && <IncidentComponentsTable components={incidentComponents} componentSerialNumbers={form.componentSerialNumbers} onChange={updateComponentSerialNumber} serialNumber={form.serialNumber} subsystem={form.subsystem} readOnly={repairExecutionDetailsReadOnly} />}{activeTab === 'Resolution' && <div className="incident-work-panel">{isFactoryRepairActivity && <label className="repair-completed-check"><input type="checkbox" checked={form.repairCompleted} onChange={(event) => update('repairCompleted', event.target.checked)} /> <span>Repair Completed</span></label>}<Field label="Resolution notes" required={isFactoryRepairActivity && form.repairCompleted} hint={isFactoryRepairActivity && !hasCompletedFactoryRepair ? 'Select Repair Completed and provide Resolution Notes to enable the next-stage transition.' : undefined}><textarea disabled={repairExecutionDetailsReadOnly && !isFactoryRepairActivity} value={form.resolutionDetails} onChange={(event) => update('resolutionDetails', event.target.value)} placeholder="Document the resolution and verification details..." rows="4" /></Field></div>}</section>
+        <section className="incident-detail-section"><h2>Issue description</h2><fieldset disabled={repairExecutionDetailsReadOnly}><div className="incident-form-grid">{field('Short description', 'shortDescription', 'Short description')}<Field label="Description"><textarea value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="Description" rows="4" /></Field></div></fieldset><AttachmentSection attachments={form.attachments} onChange={(attachments) => update('attachments', attachments)} /></section>
+        <section className="incident-work-area"><div className="incident-work-tabs">{['Notes', 'Components', 'Resolution'].map((tab) => <button type="button" key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div>{activeTab === 'Notes' && <div className="incident-work-panel"><WorkNotesField value={form.workNotes} onChange={(value) => update('workNotes', value)} users={users} groups={assignmentGroups} inputRef={workNotesInput} />{isPreDispatchApproval && form.groupApproval && <section className="group-approval-panel"><h3>{form.groupApproval.assignmentGroup} approval</h3><p>{form.groupApproval.status === 'Approved' ? `Approved by ${form.groupApproval.approvedBy}.` : `Pending approval from ${form.groupApproval.assignmentGroup} (${form.groupApproval.members.filter((member) => member.status === 'Pending').length} member${form.groupApproval.members.filter((member) => member.status === 'Pending').length === 1 ? '' : 's'}).`}</p>{canApproveGroupRequest && <button type="button" className="incident-next-stage-button" onClick={() => setApprovalDecisionOpen(true)}>Approve group request</button>}</section>}<details><summary>Record journal</summary>{(incident.auditLog || []).length ? <ol className="incident-journal">{[...incident.auditLog].reverse().map((entry) => <li key={entry.id}><article><header><div><strong>{entry.updatedBy || 'System'}</strong><span>Updated record</span></div><time>{openedDateLabel(entry.updatedAt)}</time></header><dl><div><dt>Assigned group</dt><dd>{entry.assignedGroup || '--'}</dd></div>{entry.changes.map((change, index) => <div key={`${change.field}-${index}`}><dt>{change.field}</dt><dd><s>{String(change.previous || '--')}</s><i>to</i><b>{String(change.next || '--')}</b></dd></div>)}</dl></article></li>)}</ol> : <p>No journal entries have been recorded.</p>}</details></div>}{activeTab === 'Components' && <IncidentComponentsTable components={incidentComponents} componentSerialNumbers={form.componentSerialNumbers} onChange={updateComponentSerialNumber} serialNumber={form.serialNumber} subsystem={form.subsystem} readOnly={repairExecutionDetailsReadOnly} />}{activeTab === 'Resolution' && <div className="incident-work-panel resolution-work-panel">{isRepairWorkInProgress && <section className={`resolution-completion-card ${form.repairCompleted ? 'is-complete' : ''}`}><header><div><span className="resolution-card-icon"><Wrench size={15} /></span><div><h3>Repair completion</h3><p>Confirm that corrective work and functional verification are complete.</p></div></div><span className="resolution-state">{form.repairCompleted ? 'Complete' : 'Required'}</span></header><label className="repair-completed-check"><input type="checkbox" checked={form.repairCompleted} onChange={(event) => update('repairCompleted', event.target.checked)} /><span><strong>Repair completed</strong><small>All repair actions and checks have been completed.</small></span></label></section>}{isSiteTaslWorkInProgress && <ReplacementPartsPanel enabled={replacementDraft.partReplacementRequired} onToggle={togglePartReplacementRequired} parts={replacementDraft.replacementParts} components={incidentComponents} approval={replacementApproval} onAdd={addReplacementPart} onRemove={removeReplacementPart} onChange={updateReplacementPart} onSubmit={submitReplacementApproval} canSubmit={canSubmitReplacementApproval} /> }<section className="resolution-notes-panel"><header><div><h3>Resolution &amp; verification</h3><p>Record the work performed, test results, and service outcome.</p></div>{isRepairWorkInProgress && <span className={`resolution-state ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Ready to progress' : 'Action needed'}</span>}</header><Field label="Resolution notes" required={isRepairWorkInProgress && form.repairCompleted}><textarea disabled={repairExecutionDetailsReadOnly && !isRepairWorkInProgress} value={form.resolutionDetails} onChange={(event) => update('resolutionDetails', event.target.value)} placeholder="Document the resolution and verification details..." rows="4" /></Field>{isRepairWorkInProgress && <p className={`resolution-readiness ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Completion requirements met. Record work notes, then move this incident to the next stage.' : 'Select Repair completed and provide resolution notes before moving to the next stage.'}</p>}</section></div>}</section>
       </div>
     </section>
-    <footer className="incident-form-footer">{saved && <span className="incident-saved-message">Changes saved</span>}{saveError && <span className="incident-submit-error">{saveError}</span>}<button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button>{canMoveToNextStage && <button type="button" className="incident-next-stage-button" disabled={!canAdvanceToNextStage} title={isFactoryRepairActivity && !hasCompletedFactoryRepair ? 'Complete Repair Completed and Resolution Notes before progressing.' : undefined} onClick={openStageTransition}>{nextStageActionLabel}</button>}<button type="submit" className="incident-submit-button" disabled={!canSave}>Save</button></footer>
+    <footer className="incident-form-footer">{saved && <span className="incident-saved-message">Changes saved</span>}{saveError && <span className="incident-submit-error">{saveError}</span>}<button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button>{canMoveToNextStage && <button type="button" className="incident-next-stage-button" disabled={!canAdvanceToNextStage} title={isRepairWorkInProgress && !hasCompletedRepair ? 'Complete Repair Completed and Resolution Notes before progressing.' : undefined} onClick={openStageTransition}>{nextStageActionLabel}</button>}<button type="submit" className="incident-submit-button" disabled={!canSave}>Save</button></footer>
     {approvalDecisionOpen && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Approve group request"><h2>Approve group request</h2><p>Enter the reason for this decision. It will be recorded in the incident journal.</p><label className="approval-decision-reason"><span>Decision reason</span><textarea autoFocus value={approvalDecisionReason} onChange={(event) => setApprovalDecisionReason(event.target.value)} placeholder="Why is this request being approved?" rows="4" /></label><footer><button type="button" className="incident-cancel-button" onClick={() => { setApprovalDecisionOpen(false); setApprovalDecisionReason('') }}>Cancel</button><button type="button" className="incident-next-stage-button" disabled={!approvalDecisionReason.trim()} onClick={() => approveGroupRequest(approvalDecisionReason.trim())}>Approve</button></footer></section></div>}
     {processStepsOpen && <div className="process-steps-backdrop"><section className="process-steps-dialog" role="dialog" aria-modal="true" aria-label="Process steps"><header><div><p>{form.repairExecution}</p><h2>Process steps</h2><span>Follow the guidance for each stage of this incident.</span></div><button type="button" onClick={() => setProcessStepsOpen(false)} aria-label="Close process steps"><X size={17} /></button></header><ol>{stages.map((stage) => <li key={stage.id} className={stage.status === form.status ? 'current' : ''}><span>{stage.order}</span><div><strong>{stage.status}</strong><p>{guidanceForStage(stage.status)}</p></div>{stage.status === form.status && <b>Current</b>}</li>)}</ol><footer><button type="button" className="incident-cancel-button" onClick={() => setProcessStepsOpen(false)}>Close</button></footer></section></div>}
-    {stageConfirmationOpen && nextStage && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Confirm move to next stage"><h2>{nextStageActionLabel}?</h2><p>This will set the status to {nextStage.status} and assign the incident to {nextStage.assignmentGroup}.</p><footer><button type="button" className="incident-cancel-button" onClick={() => setStageConfirmationOpen(false)}>Cancel</button><button type="button" className="incident-next-stage-button" onClick={moveToNextStage}>Confirm</button></footer></section></div>}
+    {stageConfirmationOpen && nextStage && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Confirm move to next stage"><h2>{nextStageActionLabel}?</h2>{nextStage.assignmentGroup ? <p>This will set the status to {nextStage.status} and assign the incident to {nextStage.assignmentGroup}.</p> : <><p>Select the Assignment Group required to continue to {nextStage.status}. The current assignee will be cleared.</p><Field label="Assignment group" required><SelectField value={manualNextAssignmentGroup} onChange={setManualNextAssignmentGroup} options={assignmentGroupOptions} placeholder="Select assignment group" /></Field></>}<footer><button type="button" className="incident-cancel-button" onClick={() => { setManualNextAssignmentGroup(''); setStageConfirmationOpen(false) }}>Cancel</button><button type="button" className="incident-next-stage-button" disabled={!nextStage.assignmentGroup && !manualNextAssignmentGroup} onClick={moveToNextStage}>Confirm</button></footer></section></div>}
   </form>
 }

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { ArrowLeft, CheckCircle2, ChevronDown, Download, Edit2, Eye, FileSpreadsheet, Search, Settings2, Trash2, Upload, X } from 'lucide-react'
+import { normalizePartNumber, parseConfigurationWorkbook, parseRouteCardWorkbook, reconcileProductImport } from '../data/productImport'
 
 const productColumns = [
   { key: 'product_serial_number', label: 'Product Serial Number', required: true, width: 175 },
@@ -91,9 +92,6 @@ export const seedProducts = Array.from({ length: 15 }, (_, unitIndex) => {
   })
 }).flat()
 
-const normalize = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
-const blankMapping = () => Object.fromEntries(productColumns.map(({ key }) => [key, '']))
-
 export default function ProductMasterPage({ products, setProducts }) {
   const [activeTab, setActiveTab] = useState('products')
   const [search, setSearch] = useState('')
@@ -102,14 +100,12 @@ export default function ProductMasterPage({ products, setProducts }) {
   const [showColumns, setShowColumns] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [editingProduct, setEditingProduct] = useState(null)
-  const [fileName, setFileName] = useState('')
-  const [sourceHeaders, setSourceHeaders] = useState([])
-  const [sourceRows, setSourceRows] = useState([])
-  const [mapping, setMapping] = useState(blankMapping)
-  const [importSetName, setImportSetName] = useState('')
-  const [importSets, setImportSets] = useState([])
+  const [importIdentity, setImportIdentity] = useState({ productSerialNumber: 'LM-016', productCategory: 'Loitering Munition' })
+  const [routeCards, setRouteCards] = useState(null)
+  const [configuration, setConfiguration] = useState(null)
   const [importMessage, setImportMessage] = useState('')
-  const fileInput = useRef(null)
+  const routeCardInput = useRef(null)
+  const configurationInput = useRef(null)
 
   const activeColumns = productColumns.filter(({ key }) => visibleColumns.includes(key))
   const filteredProducts = useMemo(() => products.filter((product) =>
@@ -119,60 +115,44 @@ export default function ProductMasterPage({ products, setProducts }) {
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize))
   const visibleProducts = filteredProducts.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize)
 
-  const mappedRows = useMemo(() => sourceRows.map((row) => Object.fromEntries(productColumns.map(({ key }) => [key, mapping[key] ? row[mapping[key]] ?? '' : '']))), [mapping, sourceRows])
-  const requiredUnmapped = productColumns.filter(({ key, required }) => required && !mapping[key])
-  const invalidRows = mappedRows.filter((row) => productColumns.some(({ key, required }) => required && !String(row[key] ?? '').trim()))
+  const reconciliation = useMemo(() => routeCards && configuration
+    ? reconcileProductImport({ ...importIdentity, routeCards, configuration })
+    : null, [configuration, importIdentity, routeCards])
 
   const toggleColumn = (key) => setVisibleColumns((current) => current.includes(key) ? current.filter((column) => column !== key) : [...current, key])
 
-  const handleFile = async (event) => {
+  const handleWorkbook = async (event, parser, setWorkbook, label) => {
     const file = event.target.files?.[0]
     if (!file) return
     setImportMessage('')
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
-    const sheet = workbook.Sheets[workbook.SheetNames[0]]
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false })
-    const headers = rows.length ? Object.keys(rows[0]) : []
-    const autoMapping = Object.fromEntries(productColumns.map(({ key, label }) => {
-      const source = headers.find((header) => normalize(header) === normalize(key) || normalize(header) === normalize(label))
-      return [key, source ?? '']
-    }))
-    setFileName(file.name)
-    setSourceRows(rows)
-    setSourceHeaders(headers)
-    setMapping(autoMapping)
+    try {
+      setWorkbook(parser(await file.arrayBuffer(), file.name))
+    } catch {
+      setImportMessage(`${label} could not be read. Select a valid Excel workbook and try again.`)
+    }
   }
 
-  const saveImportSet = () => {
-    if (!importSetName.trim()) {
-      setImportMessage('Enter a name before saving the import set.')
+  const replaceImportedProductRows = () => {
+    if (!reconciliation) {
+      setImportMessage('Select both Route Card and Configuration workbooks before importing.')
       return
     }
-    setImportSets((current) => [{ id: Date.now(), name: importSetName.trim(), mapping, sourceHeaders, created: new Date().toLocaleDateString() }, ...current])
-    setImportMessage(`Import set "${importSetName.trim()}" saved.`)
-  }
-
-  const applyImportSet = (importSet) => {
-    setMapping(importSet.mapping)
-    setImportSetName(importSet.name)
-    setImportMessage(`Applied import set "${importSet.name}".`)
-  }
-
-  const importRows = () => {
-    if (!sourceRows.length) {
-      setImportMessage('Choose an Excel workbook first.')
+    if (!importIdentity.productSerialNumber.trim() || !importIdentity.productCategory.trim()) {
+      setImportMessage('Enter a Product Serial Number and Product Category before importing.')
       return
     }
-    if (requiredUnmapped.length) {
-      setImportMessage(`Map required columns: ${requiredUnmapped.map(({ label }) => label).join(', ')}.`)
+    if (reconciliation.invalidRouteRows.length || reconciliation.invalidConfigurationRows.length) {
+      setImportMessage('Resolve invalid source rows before importing.')
       return
     }
-    if (invalidRows.length) {
-      setImportMessage(`${invalidRows.length} row(s) are missing a required mapped value. Review the preview before importing.`)
-      return
-    }
-    setProducts((current) => [...mappedRows, ...current])
-    setImportMessage(`${mappedRows.length} product row(s) imported successfully.`)
+    const serial = importIdentity.productSerialNumber.trim()
+    const existingCount = products.filter((product) => normalizePartNumber(product.product_serial_number) === normalizePartNumber(serial)).length
+    if (!window.confirm(`Replace ${existingCount} existing Product Master row(s) for ${serial} with ${reconciliation.assembledRows.length} reconciled component row(s)?`)) return
+    setProducts((current) => [
+      ...reconciliation.assembledRows,
+      ...current.filter((product) => normalizePartNumber(product.product_serial_number) !== normalizePartNumber(serial)),
+    ])
+    setImportMessage(`${reconciliation.assembledRows.length} component row(s) imported for ${serial}; ${reconciliation.unmatchedRouteRows.length} route-card row(s) were retained without a configuration serial.`)
     setActiveTab('products')
   }
 
@@ -216,35 +196,66 @@ export default function ProductMasterPage({ products, setProducts }) {
             </div>
             {showColumns && <div className="column-picker product-column-picker"><div className="column-picker-head"><strong>Display columns</strong><button onClick={() => setShowColumns(false)}><X size={15} /></button></div>{productColumns.map(({ key, label }) => <label key={key}><input type="checkbox" checked={visibleColumns.includes(key)} onChange={() => toggleColumn(key)} /> {label}</label>)}</div>}
           </div>
-          <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleProducts.map((product) => <tr key={product.material_serial_number}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedProduct(product)}>{product[key]}</button> : product[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View product" onClick={() => setSelectedProduct(product)}><Eye size={15} /></button><button className="action-btn" title="Edit product" onClick={() => setEditingProduct(product)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete product" onClick={() => deleteProduct(product)}><Trash2 size={15} /></button></div></td></tr>)}{!filteredProducts.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No products match the current search.</td></tr>}</tbody></table></div></div>
+          <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleProducts.map((product) => <tr key={product.productRecordId || `${product.product_serial_number}-${product.material_serial_number}-${product.part_number}`}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedProduct(product)}>{product[key]}</button> : product[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View product" onClick={() => setSelectedProduct(product)}><Eye size={15} /></button><button className="action-btn" title="Edit product" onClick={() => setEditingProduct(product)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete product" onClick={() => deleteProduct(product)}><Trash2 size={15} /></button></div></td></tr>)}{!filteredProducts.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No products match the current search.</td></tr>}</tbody></table></div></div>
           <footer className="incident-pagination"><span>Showing {filteredProducts.length ? `${(Math.min(page, totalPages) - 1) * pageSize + 1}-${Math.min(Math.min(page, totalPages) * pageSize, filteredProducts.length)} of ${filteredProducts.length}` : '0'} record{filteredProducts.length === 1 ? '' : 's'}</span><div className="incident-page-controls"><button className="compact-button secondary" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button><span>Page {Math.min(page, totalPages)} of {totalPages}</span><button className="compact-button secondary" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button></div></footer>
         </section>
       )}
 
-      {activeTab === 'imports' && (
-        <section className="import-workspace">
-          <div className="import-step-card">
-            <div className="import-step-heading"><span>1</span><div><h2>Choose workbook</h2><p>Upload an Excel workbook. The first worksheet is used for mapping.</p></div></div>
-            <div className="import-file-row"><input ref={fileInput} type="file" accept=".xlsx,.xls" onChange={handleFile} hidden /><button className="compact-button primary" onClick={() => fileInput.current?.click()}><FileSpreadsheet size={16} /> Select Excel file</button><span>{fileName || 'No file selected'}</span></div>
-          </div>
-
-          <div className={`import-step-card ${!sourceHeaders.length ? 'disabled-step' : ''}`}>
-            <div className="import-step-heading"><span>2</span><div><h2>Map source columns</h2><p>Match each Excel column to the fixed Product Master database schema.</p></div></div>
-            <div className="mapping-table-wrap"><table className="mapping-table"><thead><tr><th>Product Master field</th><th>Required</th><th>Excel column</th></tr></thead><tbody>{productColumns.map(({ key, label, required }) => <tr key={key}><td>{label}</td><td>{required ? <span className="priority-label critical">Required</span> : <span className="priority-label normal">Optional</span>}</td><td><select value={mapping[key]} disabled={!sourceHeaders.length} onChange={(event) => setMapping((current) => ({ ...current, [key]: event.target.value }))}><option value="">Do not import</option>{sourceHeaders.map((header) => <option key={header} value={header}>{header}</option>)}</select></td></tr>)}</tbody></table></div>
-          </div>
-
-          <div className={`import-step-card ${!sourceHeaders.length ? 'disabled-step' : ''}`}>
-            <div className="import-step-heading"><span>3</span><div><h2>Save or run import</h2><p>Save a reusable mapping as an import set, then validate and import the current workbook.</p></div></div>
-            <div className="import-actions-row"><input value={importSetName} onChange={(event) => setImportSetName(event.target.value)} placeholder="Import set name, e.g. SAP material register" disabled={!sourceHeaders.length} /><button className="compact-button secondary" onClick={saveImportSet} disabled={!sourceHeaders.length}>Save import set</button><button className="compact-button primary" onClick={importRows} disabled={!sourceHeaders.length}><Upload size={15} /> Validate and import</button></div>
-            {importMessage && <div className={`import-message ${importMessage.includes('successfully') || importMessage.includes('saved') ? 'success' : ''}`}><CheckCircle2 size={15} /> {importMessage}</div>}
-            {importSets.length > 0 && <div className="saved-import-sets"><strong>Saved import sets</strong>{importSets.map((importSet) => <button key={importSet.id} onClick={() => applyImportSet(importSet)}>{importSet.name}<span>{importSet.created}</span></button>)}</div>}
-          </div>
-
-          {sourceRows.length > 0 && <div className="import-preview"><div className="panel-head"><div><h2>Import preview</h2><p>{sourceRows.length} rows detected. {invalidRows.length ? `${invalidRows.length} require correction.` : 'All mapped required values are present.'}</p></div></div><div className="enterprise-table-scroll"><table className="enterprise-table"><thead><tr>{productColumns.filter(({ key }) => mapping[key]).map(({ key, label }) => <th key={key}>{label}</th>)}</tr></thead><tbody>{mappedRows.slice(0, 5).map((row, index) => <tr key={index}>{productColumns.filter(({ key }) => mapping[key]).map(({ key }) => <td key={key}>{row[key] || <span className="table-empty">--</span>}</td>)}</tr>)}</tbody></table></div></div>}
-        </section>
-      )}
+      {activeTab === 'imports' && <ProductImportWorkbench importIdentity={importIdentity} setImportIdentity={setImportIdentity} routeCards={routeCards} configuration={configuration} reconciliation={reconciliation} importMessage={importMessage} routeCardInput={routeCardInput} configurationInput={configurationInput} onRouteCardFile={(event) => handleWorkbook(event, parseRouteCardWorkbook, setRouteCards, 'Route Card workbook')} onConfigurationFile={(event) => handleWorkbook(event, parseConfigurationWorkbook, setConfiguration, 'Configuration workbook')} onImport={replaceImportedProductRows} />}
     </>
   )
+}
+
+function ProductImportWorkbench({ importIdentity, setImportIdentity, routeCards, configuration, reconciliation, importMessage, routeCardInput, configurationInput, onRouteCardFile, onConfigurationFile, onImport }) {
+  const updateIdentity = (key, value) => setImportIdentity((current) => ({ ...current, [key]: value }))
+  const invalidCount = reconciliation ? reconciliation.invalidRouteRows.length + reconciliation.invalidConfigurationRows.length : 0
+  const canImport = reconciliation && !invalidCount && importIdentity.productSerialNumber.trim() && importIdentity.productCategory.trim()
+
+  return <section className="import-workspace product-import-workspace">
+    <div className="import-step-card">
+      <div className="import-step-heading"><span>1</span><div><h2>Product identity</h2><p>Every assembled component is assigned to this product before it is saved.</p></div></div>
+      <div className="product-import-identity">
+        <label><span>Product serial number</span><input value={importIdentity.productSerialNumber} onChange={(event) => updateIdentity('productSerialNumber', event.target.value)} /></label>
+        <label><span>Product category</span><input value={importIdentity.productCategory} onChange={(event) => updateIdentity('productCategory', event.target.value)} /></label>
+      </div>
+    </div>
+
+    <div className="product-import-sources">
+      <div className="import-step-card">
+        <div className="import-step-heading"><span>2</span><div><h2>Route Card workbook</h2><p>All route-card sheets are inspected for component rows.</p></div></div>
+        <div className="import-file-row"><input ref={routeCardInput} type="file" accept=".xlsx,.xls" onChange={onRouteCardFile} hidden /><button className="compact-button primary" onClick={() => routeCardInput.current?.click()}><FileSpreadsheet size={16} /> Select Route Cards</button><span>{routeCards?.fileName || 'No file selected'}</span></div>
+        {routeCards && <p className="import-source-summary">{routeCards.sheetNames.length} sheets, {routeCards.rows.length} valid component rows, {routeCards.invalidRows.length} invalid rows.</p>}
+      </div>
+      <div className="import-step-card">
+        <div className="import-step-heading"><span>3</span><div><h2>Configuration workbook</h2><p>Part Numbers provide serial numbers and subsystem assignments.</p></div></div>
+        <div className="import-file-row"><input ref={configurationInput} type="file" accept=".xlsx,.xls" onChange={onConfigurationFile} hidden /><button className="compact-button primary" onClick={() => configurationInput.current?.click()}><FileSpreadsheet size={16} /> Select Configuration</button><span>{configuration?.fileName || 'No file selected'}</span></div>
+        {configuration && <p className="import-source-summary">{configuration.sheetNames.length} sheets, {configuration.rows.length} valid serial rows, {configuration.invalidRows.length} invalid rows.</p>}
+      </div>
+    </div>
+
+    {reconciliation && <>
+      <div className="import-step-card import-reconciliation-summary">
+        <div className="import-step-heading"><span>4</span><div><h2>Reconciliation review</h2><p>Components are joined by normalized Part Number. One-to-many serial assignments are expanded into separate Product Master records.</p></div></div>
+        <div className="import-summary-grid">
+          <div><span>Assembled records</span><strong>{reconciliation.assembledRows.length}</strong></div>
+          <div><span>Matched route rows</span><strong>{reconciliation.routeCards.rows.length - reconciliation.unmatchedRouteRows.length}</strong></div>
+          <div className={reconciliation.unmatchedRouteRows.length ? 'warning' : ''}><span>Unmatched route rows</span><strong>{reconciliation.unmatchedRouteRows.length}</strong></div>
+          <div className={reconciliation.duplicateConfigurationMatches.length ? 'warning' : ''}><span>Repeated part numbers</span><strong>{reconciliation.duplicateConfigurationMatches.length}</strong></div>
+          <div className={invalidCount ? 'error' : ''}><span>Invalid source rows</span><strong>{invalidCount}</strong></div>
+        </div>
+        {reconciliation.unmatchedRouteRows.length > 0 && <p className="import-review-note">Unmatched Route Card components will be imported with a blank Material Serial No and remain visible for follow-up.</p>}
+        {invalidCount > 0 && <p className="import-review-note error">Import is blocked until all source rows missing required values are corrected.</p>}
+      </div>
+
+      <div className="import-preview"><div className="panel-head"><div><h2>Assembled component preview</h2><p>Showing the first 15 of {reconciliation.assembledRows.length} records.</p></div></div><div className="enterprise-table-scroll"><table className="enterprise-table"><thead><tr><th>Route card</th><th>Part number</th><th>Material description</th><th>Serial number</th><th>Subsystem</th><th>Match</th></tr></thead><tbody>{reconciliation.assembledRows.slice(0, 15).map((row) => <tr key={row.productRecordId}><td>{row.route_card_description}</td><td>{row.part_number}</td><td>{row.material_description}</td><td>{row.material_serial_number || <span className="table-empty">--</span>}</td><td>{row.subsystems || <span className="table-empty">--</span>}</td><td><span className={`priority-label ${row.importSource.matchStatus === 'matched' ? 'normal' : 'critical'}`}>{row.importSource.matchStatus}</span></td></tr>)}</tbody></table></div></div>
+
+      <div className="import-step-card import-commit-card">
+        <div className="import-step-heading"><span>5</span><div><h2>Replace product components</h2><p>This replaces only existing rows for {importIdentity.productSerialNumber || 'the selected product serial'}; its lifecycle asset is not changed.</p></div></div>
+        <div className="import-actions-row"><button className="compact-button primary" disabled={!canImport} onClick={onImport}><Upload size={15} /> Validate and replace {importIdentity.productSerialNumber || 'product'}</button></div>
+      </div>
+    </>}
+    {importMessage && <div className={`import-message ${importMessage.includes('imported') ? 'success' : ''}`}><CheckCircle2 size={15} /> {importMessage}</div>}
+  </section>
 }
 
 function ProductRecordView({ product, onBack, onEdit }) {

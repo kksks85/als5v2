@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock, Download, Eye, GitBranch, 
 
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
 
-const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval']
+const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval', 'Material Replacement Approval']
 const APPROVAL_PRIORITIES = ['Critical', 'High', 'Normal', 'Low']
 
 const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocuments) => {
@@ -83,12 +83,14 @@ const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocume
 const incidentGroupApprovals = (incidents) => incidents.flatMap((incident) => {
   const approval = incident.groupApproval
   if (!approval?.members?.length) return []
+  const isMaterialReplacement = approval.approvalType === 'replacement-parts'
+  const approvalType = isMaterialReplacement ? 'Material Replacement Approval' : 'Pre-dispatch group approval'
   return approval.members.map((member, index) => ({
     id: `${approval.id}-${member.name}`,
     displayId: `APR-${String(approval.id).slice(-6)}${String(index + 1).padStart(2, '0')}`,
     ref: incident.id,
-    title: `Pre-dispatch approval: ${incident.title || incident.id}`,
-    type: 'Pre-dispatch group approval',
+    title: `${isMaterialReplacement ? 'Material replacement approval' : 'Pre-dispatch approval'}: ${incident.title || incident.id}`,
+    type: approvalType,
     priority: incident.priority === 'Critical (AOG)' ? 'Critical' : incident.priority || 'Normal',
     status: member.status,
     requestedBy: approval.requestedBy || 'System',
@@ -251,7 +253,7 @@ function ApprovalDetail({ approval, currentUser, onClose, onRequestDecision, onO
 
       <div className="approval-detail-layout">
         <main className="approval-detail-main">
-          <section className="approval-detail-section">
+          <section className="approval-detail-section approval-request-section">
             <header><h2>Request</h2><span className="approval-type-tag">{approval.type}</span></header>
             <dl className="approval-metadata-grid">
               <div><dt>Incident ID</dt><dd><button type="button" className="approval-incident-link" onClick={() => onOpenIncident?.(approval.incidentId || approval.ref)}>{approval.ref}</button></dd></div>
@@ -264,10 +266,10 @@ function ApprovalDetail({ approval, currentUser, onClose, onRequestDecision, onO
             <header><h2>Resolution details</h2><span>Read only</span></header>
             <textarea aria-label="Resolution details" value={approval.resolutionDetails || ''} readOnly placeholder="No resolution notes have been recorded for this incident." />
           </section>
-          {approval.remarks && <section className="approval-detail-section"><header><h2>Remarks</h2></header><p className="approval-remarks">{approval.remarks}</p></section>}
+          {approval.remarks && <section className="approval-detail-section approval-remarks-section"><header><h2>Remarks</h2></header><p className="approval-remarks">{approval.remarks}</p></section>}
         </main>
         <aside className="approval-detail-sidebar">
-          <section className="approval-detail-section">
+          <section className="approval-detail-section approval-assignment-section">
             <header><h2>Assignment</h2></header>
             <dl className="approval-assignment-list">
               <div><dt>Assignment group</dt><dd>{approval.assignmentGroup || '--'}</dd></div>

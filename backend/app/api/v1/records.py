@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -28,6 +28,8 @@ ALLOWED_RESOURCES = {
     "email_settings",
     "email_logs",
     "outbound_email_rules",
+    "mail_correspondence",
+    "calendar_events",
 }
 RESOURCE_MODELS = {
     "customers": CustomerRecord,
@@ -45,6 +47,8 @@ RESOURCE_MODELS = {
     "email_settings": EmailSettingsRecord,
     "email_logs": EmailLogRecord,
     "outbound_email_rules": OutboundEmailRuleRecord,
+    "mail_correspondence": MailCorrespondenceRecord,
+    "calendar_events": CalendarEventRecord,
 }
 
 

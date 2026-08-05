@@ -2,12 +2,17 @@ import { useEffect, useState } from 'react'
 import {
   Mail, Send, ArrowDownToLine, ArrowUpFromLine, FileCode, FlaskConical,
   Plus, Trash2, Pencil, CheckCircle2, XCircle, Play, Save, ChevronRight,
-  Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered, Link2, Undo2, Redo2
+  Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered, Link2, Undo2, Redo2, ImagePlus, Table2
 } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
+import { Image } from '@tiptap/extension-image'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 import { emailApi, recordApi } from '../data/api'
 
 /* ── Tab definitions ── */
@@ -106,9 +111,21 @@ const richTextHtml = (value) => {
   return value.split(/\n{2,}/).map((paragraph) => `<p>${paragraph.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</p>`).join('')
 }
 
-function TemplateBodyEditor({ value, onChange }) {
+const tableLabel = (key) => key.replace(/([A-Z])/g, ' $1').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
+const emailTemplateTables = (data, assignmentGroups, users) => [
+  { id: 'incident', label: 'Incidents', records: data.incidents || [] },
+  { id: 'customer', label: 'Customers', records: data.customers || [] },
+  { id: 'contract', label: 'Contracts', records: data.contracts || [] },
+  { id: 'product', label: 'Product Master', records: data.products || [] },
+  { id: 'user', label: 'Users', records: users || [] },
+  { id: 'assignment_group', label: 'Assignment Groups', records: assignmentGroups || [] },
+].map((table) => ({ ...table, columns: [...new Set(table.records.flatMap((record) => Object.keys(record || {})))].sort() }))
+
+function TemplateBodyEditor({ value, onChange, onEditorReady }) {
+  const [tablePickerOpen, setTablePickerOpen] = useState(false)
+  const [tableSize, setTableSize] = useState({ rows: 3, columns: 3 })
   const editor = useEditor({
-    extensions: [StarterKit, Underline, Link.configure({ openOnClick: false, autolink: true })],
+    extensions: [StarterKit.configure({ link: false, underline: false }), Underline, Link.configure({ openOnClick: false, autolink: true }), Image, Table.configure({ resizable: true }), TableRow, TableHeader, TableCell],
     content: richTextHtml(value),
     editorProps: { attributes: { class: 'template-rich-text-content', 'aria-label': 'Template body' } },
     onUpdate: ({ editor: activeEditor }) => onChange(activeEditor.getHTML()),
@@ -118,11 +135,24 @@ function TemplateBodyEditor({ value, onChange }) {
     if (editor && editor.getHTML() !== richTextHtml(value)) editor.commands.setContent(richTextHtml(value), false)
   }, [editor, value])
 
+  useEffect(() => {
+    onEditorReady?.(editor)
+    return () => onEditorReady?.(null)
+  }, [editor, onEditorReady])
+
   if (!editor) return null
   const format = (command) => () => editor.chain().focus()[command]().run()
   const addLink = () => {
     const url = window.prompt('Enter link URL')
     if (url) editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+  }
+  const addImage = () => {
+    const url = window.prompt('Enter the image URL')
+    if (url) editor.chain().focus().setImage({ src: url, alt: 'Email image' }).run()
+  }
+  const insertTable = (rows, columns) => {
+    editor.chain().focus().insertTable({ rows, cols: columns, withHeaderRow: true }).run()
+    setTablePickerOpen(false)
   }
   return <div className="template-rich-text-editor">
     <div className="template-rich-text-toolbar" role="toolbar" aria-label="Text formatting">
@@ -134,6 +164,8 @@ function TemplateBodyEditor({ value, onChange }) {
       <button type="button" title="Bulleted list" aria-label="Bulleted list" className={editor.isActive('bulletList') ? 'active' : ''} onClick={format('toggleBulletList')}><List size={15} /></button>
       <button type="button" title="Numbered list" aria-label="Numbered list" className={editor.isActive('orderedList') ? 'active' : ''} onClick={format('toggleOrderedList')}><ListOrdered size={15} /></button>
       <button type="button" title="Add link" aria-label="Add link" className={editor.isActive('link') ? 'active' : ''} onClick={addLink}><Link2 size={15} /></button>
+      <button type="button" title="Add image from URL" aria-label="Add image from URL" onClick={addImage}><ImagePlus size={15} /></button>
+      <div className="template-table-picker"><button type="button" title="Insert table" aria-label="Insert table" aria-expanded={tablePickerOpen} className={tablePickerOpen ? 'active' : ''} onClick={() => setTablePickerOpen((open) => !open)}><Table2 size={15} /></button>{tablePickerOpen && <div className="template-table-size-menu" role="dialog" aria-label="Select table size"><div className="template-table-size-grid" onMouseLeave={() => setTableSize({ rows: 3, columns: 3 })}>{Array.from({ length: 8 }, (_, rowIndex) => Array.from({ length: 10 }, (_, columnIndex) => { const rows = rowIndex + 1; const columns = columnIndex + 1; const selected = rows <= tableSize.rows && columns <= tableSize.columns; return <button type="button" key={`${rows}-${columns}`} className={selected ? 'selected' : ''} aria-label={`${rows} rows by ${columns} columns`} title={`${rows} x ${columns}`} onMouseEnter={() => setTableSize({ rows, columns })} onFocus={() => setTableSize({ rows, columns })} onClick={() => insertTable(rows, columns)} /> }))}</div><strong>{tableSize.rows} x {tableSize.columns} table</strong></div>}</div>
       <span />
       <button type="button" title="Undo" aria-label="Undo" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}><Undo2 size={15} /></button>
       <button type="button" title="Redo" aria-label="Redo" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}><Redo2 size={15} /></button>
@@ -142,7 +174,7 @@ function TemplateBodyEditor({ value, onChange }) {
   </div>
 }
 
-export default function EmailSettingsPage({ assignmentGroups, users }) {
+export default function EmailSettingsPage({ assignmentGroups, users, data = {} }) {
   const [activeTab, setActiveTab] = useState('inbound')
   const [inbound, setInbound] = useState({ provider: 'custom', protocol: 'IMAP', host: '', port: '993', ssl: true, email: '', password: '', folder: 'INBOX', pollInterval: '5' })
   const [outbound, setOutbound] = useState({ provider: 'custom', host: '', port: '587', ssl: true, auth: true, email: '', password: '', fromName: 'Aerofix Service', fromEmail: '' })
@@ -155,11 +187,15 @@ export default function EmailSettingsPage({ assignmentGroups, users }) {
   const [showTemplateForm, setShowTemplateForm] = useState(false)
   const [editingTemplateId, setEditingTemplateId] = useState(null)
   const [templateDraft, setTemplateDraft] = useState(emptyTemplateDraft)
+  const [templateEditor, setTemplateEditor] = useState(null)
+  const [templateTableId, setTemplateTableId] = useState('incident')
   const [testResult, setTestResult] = useState(null)
   const [testEmail, setTestEmail] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
   const [emailLogs, setEmailLogs] = useState([])
   const [logFilter, setLogFilter] = useState('All')
+  const templateTables = emailTemplateTables(data, assignmentGroups, users)
+  const selectedTemplateTable = templateTables.find((table) => table.id === templateTableId) || templateTables[0]
 
   useEffect(() => {
     recordApi.list('email_settings')
@@ -337,6 +373,7 @@ export default function EmailSettingsPage({ assignmentGroups, users }) {
     setShowTemplateForm(false)
     setEditingTemplateId(null)
     setTemplateDraft(emptyTemplateDraft)
+    setTemplateEditor(null)
   }
 
   const saveTemplate = () => {
@@ -354,6 +391,11 @@ export default function EmailSettingsPage({ assignmentGroups, users }) {
       ? current.map((template) => template.id === editingTemplateId ? nextTemplate : template)
       : [...current, nextTemplate])
     closeTemplateForm()
+  }
+  const insertTemplateColumn = (column) => {
+    const token = `{{${selectedTemplateTable.id}.${column}}}`
+    if (templateEditor) templateEditor.chain().focus().insertContent(token).run()
+    else setTemplateDraft((current) => ({ ...current, body: `${current.body}${current.body ? ' ' : ''}${token}` }))
   }
 
   return (
@@ -566,7 +608,7 @@ export default function EmailSettingsPage({ assignmentGroups, users }) {
                   <div className="field"><label>Template name</label><input placeholder="e.g. Weekly digest" value={templateDraft.name} onChange={(event) => setTemplateDraft((current) => ({ ...current, name: event.target.value }))} /></div>
                   <div className="field"><label>Template ID</label><input placeholder="e.g. weekly_digest" value={templateDraft.id} disabled={Boolean(editingTemplateId)} onChange={(event) => setTemplateDraft((current) => ({ ...current, id: event.target.value }))} /></div>
                   <div className="field full-width"><label>Subject line</label><input placeholder='e.g. Weekly summary — {{date}}' value={templateDraft.subject} onChange={(event) => setTemplateDraft((current) => ({ ...current, subject: event.target.value }))} /><p className="field-hint">Available: {'{{incident_id}}'}, {'{{title}}'}, {'{{status}}'}, {'{{customer}}'}, {'{{assignee}}'}, {'{{date}}'}</p></div>
-                  <div className="field full-width"><label>Body</label><TemplateBodyEditor value={templateDraft.body} onChange={(body) => setTemplateDraft((current) => ({ ...current, body }))} /></div>
+                  <div className="field full-width"><label>Body</label><div className="template-composer"><div className="template-data-picker"><label>System table<select value={selectedTemplateTable?.id || ''} onChange={(event) => setTemplateTableId(event.target.value)}>{templateTables.map((table) => <option key={table.id} value={table.id}>{table.label}</option>)}</select></label><p>Select a column to append its email token at the cursor.</p><div className="template-column-list">{selectedTemplateTable?.columns.length ? selectedTemplateTable.columns.map((column) => <button type="button" key={column} onClick={() => insertTemplateColumn(column)} title={`Insert {{${selectedTemplateTable.id}.${column}}}`}>{tableLabel(column)}<code>{`{{${selectedTemplateTable.id}.${column}}}`}</code></button>) : <span>No columns are available for this table.</span>}</div></div><TemplateBodyEditor value={templateDraft.body} onChange={(body) => setTemplateDraft((current) => ({ ...current, body }))} onEditorReady={setTemplateEditor} /></div></div>
                 </div>
                 <div className="form-actions"><button className="primary-button" onClick={saveTemplate}>Save template</button></div>
               </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BarChart3, Bell, BookOpen, Building2, ChevronDown, ChevronRight, CircleHelp,
+  BarChart3, Bell, BookOpen, Building2, CalendarDays, ChevronDown, ChevronRight, CircleHelp,
   ClipboardList, FileText, LayoutDashboard, Lock, LogIn,
   Mail, Menu, Package, Plus, Search, Settings, Shield,
   ShieldCheck, Users, UsersRound, Workflow, Wrench,
@@ -18,11 +18,14 @@ import AssignmentGroupsPage from './pages/AssignmentGroupsPage'
 import ProcessConfigurationPage from './pages/ProcessConfigurationPage'
 import RepairExecutionsPage from './pages/RepairExecutionsPage'
 import EmailSettingsPage from './pages/EmailSettingsPage'
+import MailCorrespondencePage from './pages/MailCorrespondencePage'
+import MyCalendarPage from './pages/MyCalendarPage'
 import SystemSettingsPage from './pages/SystemSettingsPage'
+import AuthenticationSettingsPage from './pages/AuthenticationSettingsPage'
 import KnowledgeManagementPage, { seedDocuments } from './pages/KnowledgeManagementPage'
 import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
-import { notificationApi, recordApi } from './data/api'
+import { authenticationApi, notificationApi, recordApi } from './data/api'
 import { getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
 import { getConfiguredProcesses, getNextProcessStage, processConfigurationStorageKey } from './data/processConfiguration'
 
@@ -37,11 +40,14 @@ const workspaceNav = [
   { key: 'Product master', label: 'Product master', icon: Package },
   { key: 'Product categories', label: 'Product categories', icon: Package },
   { key: 'Knowledge management', label: 'Knowledge management', icon: BookOpen },
+  { key: 'Mail correspondence', label: 'Mail Correspondence', icon: Mail },
+  { key: 'My Calendar', label: 'My Calendar', icon: CalendarDays, csmOnly: true },
   { key: 'Reporting', label: 'Reporting', icon: BarChart3 },
   { key: 'Approval center', label: 'Approval center', icon: ShieldCheck },
 ]
 
 const configNav = [
+  { key: 'Authentication settings', label: 'Authentication settings', icon: Shield },
   { key: 'User management', label: 'User management', icon: Users },
   { key: 'Assignment groups', label: 'Assignment groups', icon: UsersRound },
   { key: 'Repair execution', label: 'Repair Execution', icon: Wrench },
@@ -91,6 +97,36 @@ const normalizeProcessAssignmentGroups = (processes) => processes.map((process) 
 
 const recordMapsEqual = (first, second) => first.size === second.size
   && [...first].every(([recordId, payload]) => second.get(recordId) === payload)
+
+const notificationTimestamp = (notification) => Date.parse(notification.createdAt || '') || 0
+const sortNotificationsNewestFirst = (notifications) => [...notifications]
+  .sort((first, second) => notificationTimestamp(second) - notificationTimestamp(first))
+const isReadNotification = (notification) => notification.recipientUserId
+  ? (notification.readByUserIds || []).some((userId) => String(userId) === String(notification.recipientUserId))
+  : Boolean(notification.read)
+const isStaleReadNotification = (notification, cutoff) => isReadNotification(notification)
+  && notificationTimestamp(notification) > 0
+  && notificationTimestamp(notification) < cutoff
+const assignmentGroupNotifications = (incident, assignmentGroup, groups, users) => {
+  const group = groups.find((entry) => entry.active && entry.name === assignmentGroup)
+  const createdAt = new Date().toISOString()
+  const eventId = Date.now()
+  const memberIds = new Set((group?.memberIds || []).map(String))
+  return users
+    .filter((user) => user.status === 'Active' && memberIds.has(String(user.id)))
+    .map((user) => ({
+      id: `assignment-group-${incident.id}-${eventId}-${user.id}`,
+      type: 'assignment-group',
+      title: 'New incident assigned to your group',
+      incidentId: incident.id,
+      assignmentGroup,
+      workNotes: `${incident.id} has been assigned to ${assignmentGroup}.`,
+      recipientUserId: user.id,
+      recipientName: user.name,
+      readByUserIds: [],
+      createdAt,
+    }))
+}
 
 const reseedCustomerContacts = (customers) => {
   if (localStorage.getItem(customerContactMigrationKey)) return customers
@@ -193,19 +229,27 @@ function LoginPage({ onLogin, users, assignmentGroups, directoryReady }) {
     if (!demoUsers.some((user) => user.key === selectedUserKey)) setSelectedUserKey(demoUsers[0]?.key || '')
   }, [demoUsers, selectedUserKey])
 
-  const handleSubmit = (e) => {
+  const [loginError, setLoginError] = useState('')
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    if (selectedUser) onLogin(selectedUser)
+    if (!selectedUser) return
+    setLoginError('')
+    try {
+      const session = await authenticationApi.demoLogin(selectedUser)
+      onLogin({ ...selectedUser, session })
+    } catch (error) {
+      setLoginError(error.message)
+    }
   }
 
   return (
     <div className="login-screen">
       <div className="login-image-panel">
         <div className="login-brand-content">
-          <div className="login-brand-lockup"><div className="login-brand-mark"><Wrench size={22} /></div><span>ALS 50</span></div>
+          <div className="login-brand-lockup"><span className="login-brand-mark"><img src="/assets/als50-logo-cropped.png" alt="ALS50 CSM Portal logo" /></span><span>ALS50 CSM Portal</span></div>
           <div className="login-image-copy">
             <h1>Every mission, supported.</h1>
-            <p>Customer Support Management Portal</p>
+            <p>Customer Support Management</p>
           </div>
           <div className="login-image-footer"><span>Post-delivery operations</span><span>v0.1.0</span></div>
         </div>
@@ -220,6 +264,7 @@ function LoginPage({ onLogin, users, assignmentGroups, directoryReady }) {
             <div className="demo-user-tiles">{demoUsers.map((demoUser) => <button type="button" key={demoUser.key} className={`demo-user-tile ${selectedUser?.key === demoUser.key ? 'selected' : ''}`} onClick={() => setSelectedUserKey(demoUser.key)}><span className="demo-user-avatar">{demoUser.initials}</span><span className="demo-user-details"><strong>{demoUser.label}</strong><small>{demoUser.name}</small><small>{demoUser.email}</small></span><span className="demo-user-credential">{demoUser.credential}</span></button>)}</div>
             <div className="login-actions"><button type="submit" className="login-btn primary" disabled={!directoryReady || !selectedUser}><LogIn size={17} /> Continue as {selectedUser?.name || 'selected user'}</button></div>
           </form>
+          {loginError && <p className="login-desc" role="alert">{loginError}</p>}
           <div className="login-footer"><Lock size={13} /> Demo identities map to the seeded user records and Entra IDs.</div>
         </div>
       </div>
@@ -318,6 +363,8 @@ function Dashboard({ user, onLogout }) {
   const [products, setProducts] = useState(seedProducts)
   const [productAssets, setProductAssets] = useState([])
   const [knowledgeDocuments, setKnowledgeDocuments] = useState(seedDocuments)
+  const [mailCorrespondence, setMailCorrespondence] = useState([])
+  const [calendarEvents, setCalendarEvents] = useState([])
   const [assignmentGroups, setAssignmentGroups] = useState(initialAssignmentGroups)
   const [users, setUsers] = useState(initialUsers)
   const [repairExecutions, setRepairExecutions] = useState(initialRepairExecutions)
@@ -371,6 +418,8 @@ function Dashboard({ user, onLogout }) {
       { resource: 'product_assets', records: productAssets, setRecords: setProductAssets, key: (record) => record.id },
       { resource: 'incidents', records: incidents, setRecords: setIncidents, key: (record) => record.id },
       { resource: 'knowledge_documents', records: knowledgeDocuments, setRecords: setKnowledgeDocuments, key: (record) => record.id || record.number || record.title },
+      { resource: 'mail_correspondence', records: mailCorrespondence, setRecords: setMailCorrespondence, key: (record) => record.id },
+      { resource: 'calendar_events', records: calendarEvents, setRecords: setCalendarEvents, key: (record) => record.id },
       { resource: 'users', records: users, setRecords: setUsers, key: (record) => record.id || record.email },
       { resource: 'assignment_groups', records: assignmentGroups, setRecords: setAssignmentGroups, key: (record) => record.id || record.name },
       { resource: 'repair_executions', records: repairExecutions, setRecords: setRepairExecutions, key: (record) => record.id },
@@ -440,10 +489,24 @@ function Dashboard({ user, onLogout }) {
       recipients,
     }))).then((results) => {
       if (!active) return
-      setNotifications((current) => results.reduce((next, result) => next.some((notification) => notification.id === result.notification.id) ? next : [...next, result.notification], current))
+      setNotifications((current) => sortNotificationsNewestFirst(results.reduce((next, result) => next.some((notification) => notification.id === result.notification.id) ? next : [...next, result.notification], current)))
     }).catch((error) => console.warn('Unable to create warranty-expiry notifications.', error))
     return () => { active = false }
   }, [assignmentGroups, contracts, persistenceReady, users])
+
+  useEffect(() => {
+    if (!persistenceReady) return
+    const pruneStaleReadNotifications = () => {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+      setNotifications((current) => {
+        const retained = current.filter((notification) => !isStaleReadNotification(notification, cutoff))
+        return retained.length === current.length ? current : retained
+      })
+    }
+    pruneStaleReadNotifications()
+    const timer = window.setInterval(pruneStaleReadNotifications, 60 * 60 * 1000)
+    return () => window.clearInterval(timer)
+  }, [notifications, persistenceReady])
 
   useEffect(() => {
     if (!persistenceReady || !incidents.length || !products.length || localStorage.getItem(componentSerialJournalMigrationKey)) return
@@ -475,6 +538,8 @@ function Dashboard({ user, onLogout }) {
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
+      ['mail_correspondence', mailCorrespondence, (record) => record.id],
+      ['calendar_events', calendarEvents, (record) => record.id],
       ['users', users, (record) => record.id || record.email],
       ['assignment_groups', assignmentGroups, (record) => record.id || record.name],
       ['repair_executions', repairExecutions, (record) => record.id],
@@ -496,7 +561,7 @@ function Dashboard({ user, onLogout }) {
         persistedCollections.current[resource] = nextRecordMap
       }).catch((error) => console.warn(`Unable to save ${resource}.`, error))
     })
-  }, [assignmentGroups, contracts, customers, incidents, knowledgeDocuments, notifications, persistenceReady, processes, productAssets, products, repairExecutions, users])
+  }, [assignmentGroups, calendarEvents, contracts, customers, incidents, knowledgeDocuments, mailCorrespondence, notifications, persistenceReady, processes, productAssets, products, repairExecutions, users])
 
   useEffect(() => {
     const collections = [
@@ -506,6 +571,8 @@ function Dashboard({ user, onLogout }) {
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
+      ['mail_correspondence', mailCorrespondence, (record) => record.id],
+      ['calendar_events', calendarEvents, (record) => record.id],
       ['users', users, (record) => record.id || record.email],
       ['assignment_groups', assignmentGroups, (record) => record.id || record.name],
       ['repair_executions', repairExecutions, (record) => record.id],
@@ -513,7 +580,7 @@ function Dashboard({ user, onLogout }) {
       ['notifications', notifications, (record) => record.id],
     ]
     currentCollections.current = Object.fromEntries(collections.map(([resource, records, key]) => [resource, new Map(records.map((record) => [String(key(record)), JSON.stringify(record)]))]))
-  }, [assignmentGroups, contracts, customers, incidents, knowledgeDocuments, notifications, processes, productAssets, products, repairExecutions, users])
+  }, [assignmentGroups, calendarEvents, contracts, customers, incidents, knowledgeDocuments, mailCorrespondence, notifications, processes, productAssets, products, repairExecutions, users])
 
   useEffect(() => {
     if (!persistenceReady) return
@@ -524,6 +591,8 @@ function Dashboard({ user, onLogout }) {
       ['product_assets', setProductAssets, (record) => record.id],
       ['incidents', setIncidents, (record) => record.id],
       ['knowledge_documents', setKnowledgeDocuments, (record) => record.id || record.number || record.title],
+      ['mail_correspondence', setMailCorrespondence, (record) => record.id],
+      ['calendar_events', setCalendarEvents, (record) => record.id],
       ['users', setUsers, (record) => record.id || record.email],
       ['assignment_groups', setAssignmentGroups, (record) => record.id || record.name],
       ['repair_executions', setRepairExecutions, (record) => record.id],
@@ -591,6 +660,8 @@ function Dashboard({ user, onLogout }) {
   const applicationData = { customers, incidents, contracts, products, productAssets, knowledgeDocuments, users, assignmentGroups, notifications }
   const productCategories = getProductCategories(products)
   const currentUserRecord = users.find((member) => member.email === user.email) || user
+  const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
+  const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
   const resolveGroupApproval = async (incidentId, decision, reason) => {
     const incident = incidents.find((entry) => entry.id === incidentId)
     const approval = incident?.groupApproval
@@ -598,7 +669,8 @@ function Dashboard({ user, onLogout }) {
     const decidedBy = currentUserRecord.name || user.name || user.email
     if (!approval.members?.some((member) => member.name === decidedBy && member.status === 'Pending')) return
     const decidedAt = new Date().toISOString()
-    const nextStage = decision === 'Approved'
+    const isReplacementApproval = approval.approvalType === 'replacement-parts'
+    const nextStage = decision === 'Approved' && !isReplacementApproval
       ? getNextProcessStage(incident.repairExecution, incident.status, processes)
       : null
     const nextAssignmentGroup = nextStage?.assignmentGroup || incident.assignmentGroup || incident.group || ''
@@ -644,12 +716,14 @@ function Dashboard({ user, onLogout }) {
     }
     await recordApi.bulkUpsert('incidents', [{ record_id: updatedIncident.id, payload: updatedIncident }])
     setIncidents((current) => current.map((entry) => entry.id === updatedIncident.id ? updatedIncident : entry))
+    if (nextStage && nextAssignmentGroup !== (incident.assignmentGroup || incident.group || '')) createAssignmentNotifications(updatedIncident, nextAssignmentGroup)
   }
   const openIncidentFromApproval = (incidentId) => {
     setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, activeTab: 'Notes', navigationId: Date.now() })
     setActivePage('Incidents')
   }
-  const notificationsForCurrentUser = notifications.filter((notification) => !notification.recipientUserId || String(notification.recipientUserId) === String(currentUserRecord.id))
+  const notificationsForCurrentUser = sortNotificationsNewestFirst(notifications
+    .filter((notification) => !notification.recipientUserId || String(notification.recipientUserId) === String(currentUserRecord.id)))
   const unreadNotifications = notificationsForCurrentUser.filter((notification) => notification.recipientUserId ? !notification.readByUserIds?.includes(currentUserRecord.id) : !notification.read)
   const currentUserGroupNames = assignmentGroups
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
@@ -664,7 +738,7 @@ function Dashboard({ user, onLogout }) {
       return
     }
     if (!nextNotifications.length) return
-    setNotificationToasts((current) => [...current, ...nextNotifications])
+    setNotificationToasts((current) => sortNotificationsNewestFirst([...current, ...nextNotifications]))
     const timer = window.setTimeout(() => setNotificationToasts((current) => current.filter((notification) => !nextNotifications.some((next) => next.id === notification.id))), 6000)
     return () => window.clearTimeout(timer)
   }, [currentUserRecord.id, notifications, persistenceReady])
@@ -680,8 +754,6 @@ function Dashboard({ user, onLogout }) {
       setActivePage('Incidents')
     }
   }
-  const createNotifications = (nextNotifications) => setNotifications((current) => [...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))])
-
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
@@ -692,11 +764,18 @@ function Dashboard({ user, onLogout }) {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
-      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={products} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
+      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={products} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
       case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} />
       case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} />
+      case 'Mail correspondence': return <MailCorrespondencePage correspondence={mailCorrespondence} setCorrespondence={setMailCorrespondence} users={users} currentUser={user} />
+      case 'My Calendar': return <MyCalendarPage
+        incidents={incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group))}
+        events={calendarEvents}
+        setEvents={setCalendarEvents}
+        currentUser={currentUserRecord}
+      />
       case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
       case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
       case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} />
@@ -704,8 +783,9 @@ function Dashboard({ user, onLogout }) {
       case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
       case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
       case 'Process configuration': return <ProcessConfigurationPage assignmentGroups={assignmentGroups} repairExecutions={repairExecutions} processes={processes} setProcesses={setProcesses} />
-      case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} />
+      case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} data={applicationData} />
       case 'System settings': return <SystemSettingsPage />
+      case 'Authentication settings': return <AuthenticationSettingsPage />
       default: return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} />
     }
   }
@@ -716,12 +796,12 @@ function Dashboard({ user, onLogout }) {
       {mobileNavigationOpen && <button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavigationOpen(false)} />}
       <aside className={`sidebar ${mobileNavigationOpen ? 'mobile-open' : ''}`}>
         <div className="brand">
-          <div><strong>ALS 50</strong><span>Customer Support Management Portal</span></div>
+          <div><strong>ALS50</strong><span>CSM Portal</span></div>
         </div>
 
         <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
-          {workspaceNav.map(({ key, label, icon: Icon, count }) => {
+          {workspaceNav.filter(({ csmOnly }) => !csmOnly || currentUserGroupNames.includes('Customer Support Management Group')).map(({ key, label, icon: Icon, count }) => {
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
             if (key === 'Incidents') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
@@ -742,7 +822,7 @@ function Dashboard({ user, onLogout }) {
             )
           })}
 
-          <p className="nav-label config-label">Configuration</p>
+          <p className="nav-label config-label">Administration</p>
           {configNav.map(({ key, label, icon: Icon }) => (
             <button key={key} className={`nav-item ${activePage === key ? 'active' : ''}`} onClick={() => { setActivePage(key); setMobileNavigationOpen(false) }}>
               <Icon size={18} /><span>{label}</span>
