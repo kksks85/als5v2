@@ -1,8 +1,9 @@
 const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
+let accessToken = ''
 
 async function request(path, options = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...options.headers },
     ...options,
   })
   if (!response.ok) {
@@ -27,12 +28,30 @@ export const recordApi = {
   }),
 }
 
-export const entraApi = {
-  getConfiguration: () => request('/authentication/entra/configuration'),
-  saveConfiguration: (configuration) => request('/authentication/entra/configuration', {
-    method: 'PUT',
-    body: JSON.stringify(configuration),
-  }),
+export const authenticationApi = {
+  demoLogin: async (user) => {
+    const session = await request('/authentication/demo-login', {
+      method: 'POST',
+      body: JSON.stringify({ username: user.credential || user.email, display_name: user.name, email: user.email }),
+    })
+    accessToken = session.access_token
+    return session
+  },
+  login: async (credentials) => {
+    const session = await request('/authentication/login', { method: 'POST', body: JSON.stringify(credentials) })
+    accessToken = session.access_token
+    return session
+  },
+  logout: async () => {
+    const result = await request('/authentication/logout', { method: 'POST' })
+    accessToken = ''
+    return result
+  },
+  getSettings: () => request('/authentication/settings'),
+  updateSettings: (settings) => request('/authentication/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  listRoleMappings: () => request('/authentication/role-mappings'),
+  saveRoleMapping: (directory_group, mapping) => request(`/authentication/role-mappings/${encodeURIComponent(directory_group)}`, { method: 'PUT', body: JSON.stringify(mapping) }),
+  getHealth: () => request('/authentication/health'),
 }
 
 export const emailApi = {

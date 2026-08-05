@@ -8,6 +8,7 @@ Internal post-delivery drone service-management application.
 - FastAPI application with a versioned health endpoint, PostgreSQL persistence API, and validated API schemas for customers, sites/contacts, contracts with AMC/CMC coverage, configurable product fields, and incidents.
 - PostgreSQL tables for customers, contracts, products, incidents, knowledge documents, users, assignment groups, and Microsoft Entra ID configuration.
 - Docker Compose deployment with a private PostgreSQL service, API service, and web gateway on port `5173`.
+- Provider-neutral enterprise authentication API with demo mode, RSA Authentication Manager and Active Directory LDAP integration boundaries, role mappings, signed sessions, and audit logging.
 
 ## Run locally
 
@@ -48,6 +49,60 @@ docker compose logs -f api
 docker compose down
 docker compose down -v # Removes the PostgreSQL volume; use only when deliberately resetting data.
 ```
+
+## Enterprise authentication deployment
+
+The current identity selector remains intentionally enabled for demonstrations. When `authentication_settings.enabled` is set and its provider is `rsa_ad`, `/api/v1/authentication/login` becomes the enterprise entry point and demo login is refused.
+
+Authentication sequence:
+
+```mermaid
+sequenceDiagram
+	participant B as Browser
+	participant A as ALS50 API
+	participant R as RSA Authentication Manager
+	participant D as Active Directory LDAPS
+	participant P as PostgreSQL
+	B->>A: POST /authentication/login (username, password, RSA token)
+	A->>R: Verify password and RSA token
+	R-->>A: Authentication result
+	A->>D: Query profile and memberOf groups over LDAPS
+	D-->>A: Profile and groups
+	A->>P: Resolve group-to-role mappings, create session, audit event
+	A-->>B: Standardized token and profile response; secure cookie
+```
+
+```mermaid
+classDiagram
+	class RsaConnector { <<interface>>
+		+authenticate(username, password, token)
+	}
+	class DirectoryConnector { <<interface>>
+		+find_user(username) DirectoryProfile
+	}
+	class RsaAuthenticationManagerConnector
+	class ActiveDirectoryLdapConnector
+	class ConfigurationManager
+	class SessionManager
+	class AuthorizationService
+	RsaConnector <|.. RsaAuthenticationManagerConnector
+	DirectoryConnector <|.. ActiveDirectoryLdapConnector
+	SessionManager --> UserSession
+	AuthorizationService --> SessionManager
+	ConfigurationManager --> AuthenticationSettings
+```
+
+Set these deployment secrets through the platform secret store, never in source control: a 32-byte-or-longer `AUTH_JWT_SECRET`, `LDAP_BIND_PASSWORD`, and RSA adapter credentials. Set `APP_ENV=production` for live deployments; the built-in development signing key is rejected there. LDAP must use an `ldaps://` URI. The supplied RSA connector deliberately fails closed until an organization-approved RSA Authentication Manager REST or SOAP adapter is implemented behind `RsaConnector`.
+
+Role mappings are stored in `role_mappings`. Examples: `CN=ALS50-Administrators,OU=Groups,DC=corp,DC=example,DC=com` maps to `Administrator`; `CN=ALS50-Service-Coordinators,OU=Groups,DC=corp,DC=example,DC=com` maps to `Service Coordinator`.
+
+Authentication responses use `{ access_token, token_type, expires_at, user }`. Errors use `detail.code` and `detail.message`; key codes are `AUTH_RATE_LIMITED`, `AUTH_PROVIDER_UNAVAILABLE`, `DIRECTORY_TLS_REQUIRED`, `DIRECTORY_UNAVAILABLE`, `AUTHORIZATION_DENIED`, and `AUTH_SECRET_MISSING`. Audit records include outcome, provider, source address, correlation ID, and mapped roles only. Passwords and RSA token values are never logged or persisted.
+
+The lockout policy is enforced after the configured count of `AUTH_INVALID_CREDENTIALS` events within its configured interval; failed provider/configuration calls do not lock users. Authentication state-changing cookie requests use a SameSite `Secure`/`HttpOnly` session cookie and a separate double-submit CSRF cookie. Browser clients must send the CSRF value in `X-CSRF-Token`. Bearer-token API clients do not use cookie CSRF protection.
+
+API operations: `POST /api/v1/authentication/login`, `POST /api/v1/authentication/demo-login`, `POST /api/v1/authentication/logout`, `GET /api/v1/authentication/me`, `GET|PUT /api/v1/authentication/settings`, and `GET|PUT /api/v1/authentication/role-mappings`. Settings and mapping administration must be protected by `AuthorizationService.require_any_role(..., {"Administrator"})` when the enterprise authentication middleware is applied to the remaining business routes.
+
+The provider interfaces isolate identity systems from business logic: add Azure AD, Okta, Ping Identity, or Auth0 adapters implementing the same profile/session contract without changing the application’s customer, incident, or authorization workflows. Authentication health is available at `/api/v1/authentication/health`.
 
 ## Microsoft Entra ID SSO setup
 
