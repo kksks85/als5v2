@@ -1,0 +1,92 @@
+import { useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
+import { ArrowLeft, ChevronDown, Download, Edit2, Eye, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
+
+const mcsColumns = [
+  { key: 'product_serial_number', label: 'Product Serial Number', required: true, width: 175 },
+  { key: 'part_number', label: 'Part Number', required: true, width: 150 },
+  { key: 'sap_part_number', label: 'SAP Part number', required: false, width: 165 },
+  { key: 'material_description', label: 'Material Description', required: true, width: 230 },
+  { key: 'make', label: 'Make', required: false, width: 145 },
+  { key: 'model', label: 'Model', required: false, width: 150 },
+  { key: 'item_serial_number', label: 'Item Serial No.', required: false, width: 165 },
+  { key: 'quantity', label: 'Quantity', required: true, width: 110 },
+  { key: 'unit_of_measurement', label: 'Unit of Measurement (UOM)', required: true, width: 175 },
+  { key: 'remarks', label: 'Remarks', required: false, width: 200 },
+]
+
+const emptyMcsRecord = (recordCount) => ({
+  id: `mcs-${crypto.randomUUID()}`,
+  product_serial_number: `MCS-${String(recordCount + 1).padStart(3, '0')}`,
+  part_number: '',
+  sap_part_number: '',
+  material_description: '',
+  make: '',
+  model: '',
+  item_serial_number: '',
+  quantity: '',
+  unit_of_measurement: '',
+  remarks: '',
+})
+
+export default function ProductMasterMcsPage({ records, setRecords }) {
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [visibleColumns, setVisibleColumns] = useState(mcsColumns.map(({ key }) => key))
+  const [showColumns, setShowColumns] = useState(false)
+  const [selectedRecord, setSelectedRecord] = useState(null)
+  const [editingRecord, setEditingRecord] = useState(null)
+
+  const activeColumns = mcsColumns.filter(({ key }) => visibleColumns.includes(key))
+  const filteredRecords = useMemo(() => records.filter((record) => !search || mcsColumns.some(({ key }) => String(record[key] ?? '').toLowerCase().includes(search.toLowerCase()))), [records, search])
+  const pageSize = 50
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize))
+  const visibleRecords = filteredRecords.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize)
+  const toggleColumn = (key) => setVisibleColumns((current) => current.includes(key) ? current.filter((column) => column !== key) : [...current, key])
+
+  const exportTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([Object.fromEntries(mcsColumns.map(({ label }) => [label, '']))])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Product Master MCS')
+    XLSX.writeFile(workbook, 'als50-product-master-mcs-template.xlsx')
+  }
+  const saveRecord = (nextRecord) => {
+    setRecords((current) => current.some((record) => record.id === nextRecord.id)
+      ? current.map((record) => record.id === nextRecord.id ? nextRecord : record)
+      : [...current, nextRecord])
+    setEditingRecord(null)
+  }
+
+  if (selectedRecord) return <McsRecordView record={selectedRecord} onBack={() => setSelectedRecord(null)} onEdit={() => { setEditingRecord(selectedRecord); setSelectedRecord(null) }} />
+  if (editingRecord) return <McsRecordEditor record={editingRecord} isNew={!records.some((record) => record.id === editingRecord.id)} onBack={() => setEditingRecord(null)} onSave={saveRecord} />
+
+  return <>
+    <div className="incident-list-head product-master-heading">
+      <div className="incident-list-title"><h1>Product Master - MCS</h1><p>Material and item inventory register for MCS.</p></div>
+      <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>
+    </div>
+    <section className="incident-list-page product-register-page" aria-label="MCS product register">
+      <div className="incident-command-bar product-command-bar">
+        <div className="incident-search"><Search size={15} /><input placeholder="Search all MCS product fields..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} /></div>
+        <span className="incident-list-count">{filteredRecords.length} of {records.length} records</span>
+        <div className="incident-command-actions product-command-actions">
+          <button className="compact-button secondary" onClick={() => setShowColumns((open) => !open)}><Settings2 size={15} /> Columns <ChevronDown size={14} /></button>
+          <button className="compact-button primary" onClick={() => setEditingRecord(emptyMcsRecord(records.length))}><Plus size={15} /> Add material</button>
+        </div>
+        {showColumns && <div className="column-picker product-column-picker"><div className="column-picker-head"><strong>Display columns</strong><button onClick={() => setShowColumns(false)}><X size={15} /></button></div>{mcsColumns.map(({ key, label }) => <label key={key}><input type="checkbox" checked={visibleColumns.includes(key)} onChange={() => toggleColumn(key)} /> {label}</label>)}</div>}
+      </div>
+      <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleRecords.map((record) => <tr key={record.id}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedRecord(record)}>{record[key]}</button> : record[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View material" onClick={() => setSelectedRecord(record)}><Eye size={15} /></button><button className="action-btn" title="Edit material" onClick={() => setEditingRecord(record)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete material" onClick={() => setRecords((current) => current.filter((item) => item.id !== record.id))}><Trash2 size={15} /></button></div></td></tr>)}{!filteredRecords.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No MCS materials match the current search.</td></tr>}</tbody></table></div></div>
+      <footer className="incident-pagination"><span>Showing {filteredRecords.length ? `${(Math.min(page, totalPages) - 1) * pageSize + 1}-${Math.min(Math.min(page, totalPages) * pageSize, filteredRecords.length)} of ${filteredRecords.length}` : '0'} record{filteredRecords.length === 1 ? '' : 's'}</span><div className="incident-page-controls"><button className="compact-button secondary" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button><span>Page {Math.min(page, totalPages)} of {totalPages}</span><button className="compact-button secondary" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button></div></footer>
+    </section>
+  </>
+}
+
+function McsRecordView({ record, onBack, onEdit }) {
+  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product Master - MCS</button><h1>{record.material_description || 'MCS material record'}</h1><p>{record.part_number || 'Material details'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button><button className="incident-submit-button" onClick={onEdit}>Edit material</button></div></header><section className="product-record-sheet">{mcsColumns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{record[key] || '--'}</strong></div>)}</section></section>
+}
+
+function McsRecordEditor({ record, isNew, onBack, onSave }) {
+  const [form, setForm] = useState(record)
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  return <form className="product-record-page" onSubmit={(event) => { event.preventDefault(); onSave(form) }}><header className="group-config-header"><div><button type="button" className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product Master - MCS</button><h1>{isNew ? 'Add MCS material' : 'Edit MCS material'}</h1><p>Maintain material and item inventory details for MCS.</p></div><div><button type="button" className="incident-cancel-button" onClick={onBack}>Cancel</button><button className="incident-submit-button" type="submit">{isNew ? 'Add material' : 'Save changes'}</button></div></header><section className="product-record-sheet product-record-editor">{mcsColumns.map(({ key, label, required }) => <label key={key}><span>{label}{required && ' *'}</span><input value={form[key] || ''} onChange={(event) => update(key, event.target.value)} required={required} /></label>)}</section></form>
+}

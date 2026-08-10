@@ -3,14 +3,14 @@ import smtplib
 from datetime import UTC, datetime
 from email.message import EmailMessage
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, EmailLogRecord, IncidentRecord, NotificationRecord, OutboundEmailRuleRecord, UserRecord
+from app.models import AssignmentGroupRecord, EmailLogRecord, IncidentRecord, NotificationRecord, OutboundEmailRuleRecord, SubcontractRecord, UserRecord
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -45,6 +45,13 @@ class IncidentRegistrationEmail(BaseModel):
 
 class SmtpTestEmail(BaseModel):
     recipient: EmailStr
+
+
+class SubcontractCoverageUsage(BaseModel):
+    subcontract_id: str = Field(alias="subcontractId", min_length=1, max_length=160)
+    inclusion_id: str = Field(alias="inclusionId", min_length=1, max_length=160)
+    quantity: int = Field(ge=1, le=100000)
+    reference: str = Field(default="", max_length=500)
 
 
 def environment_flag(name: str, default: bool = False) -> bool:
@@ -236,6 +243,90 @@ def send_incident_registration_email(
         "failed": sum(result["status"] == "Failed" for result in results),
         "not_sent": sum(result["status"] == "Not sent" for result in results),
     }
+
+
+@router.post("/subcontract-coverage-usage")
+def consume_subcontract_coverage(
+    usage: SubcontractCoverageUsage,
+    database: Session = Depends(get_db),
+) -> dict:
+    subcontract_record = database.scalar(select(SubcontractRecord).where(SubcontractRecord.record_id == usage.subcontract_id).with_for_update())
+    if not subcontract_record:
+        raise HTTPException(status_code=404, detail="Sub-contract not found.")
+
+    payload = dict(subcontract_record.payload)
+    packages = payload.get("maintenancePackages") or {}
+    matched_package = ""
+    matched_index = -1
+    inclusion = None
+    for package_key, entries in packages.items():
+        for index, entry in enumerate(entries or []):
+            if str(entry.get("id")) == usage.inclusion_id:
+                matched_package = package_key
+                matched_index = index
+                inclusion = dict(entry)
+                break
+        if inclusion:
+            break
+    if not inclusion:
+        raise HTTPException(status_code=404, detail="Maintenance inclusion not found.")
+    if matched_package != "unscheduled":
+        raise HTTPException(status_code=422, detail="Coverage usage and exhaustion alerts apply only to unscheduled maintenance inclusions.")
+
+    total_quantity = int(inclusion.get("totalQuantity") or 0)
+    used_quantity = int(inclusion.get("usedQuantity") or 0)
+    if total_quantity <= 0:
+        raise HTTPException(status_code=422, detail="Maintenance inclusion must have a positive total coverage quantity.")
+    if used_quantity + usage.quantity > total_quantity:
+        raise HTTPException(status_code=422, detail=f"Only {total_quantity - used_quantity} coverage unit(s) remain for this inclusion.")
+
+    next_used_quantity = used_quantity + usage.quantity
+    inclusion["usedQuantity"] = next_used_quantity
+    inclusion["remainingQuantity"] = total_quantity - next_used_quantity
+    inclusion["usageHistory"] = [*(inclusion.get("usageHistory") or []), {
+        "id": f"usage-{datetime.now(UTC).timestamp():.6f}",
+        "quantity": usage.quantity,
+        "reference": usage.reference,
+        "previousUsedQuantity": used_quantity,
+        "newUsedQuantity": next_used_quantity,
+        "previousRemainingQuantity": total_quantity - used_quantity,
+        "newRemainingQuantity": total_quantity - next_used_quantity,
+        "usedAt": datetime.now(UTC).isoformat(),
+    }]
+
+    notifications = []
+    if next_used_quantity == total_quantity and not inclusion.get("maximumAlertSent"):
+        inclusion["maximumAlertSent"] = True
+        group = database.scalar(select(AssignmentGroupRecord).where(AssignmentGroupRecord.payload["name"].astext == "Customer Support Management Group"))
+        member_ids = {str(member_id) for member_id in (group.payload.get("memberIds") if group else [])}
+        users = [record.payload for record in database.scalars(select(UserRecord)).all()]
+        recipients = [user for user in users if str(user.get("id")) in member_ids and user.get("status", "Active") == "Active"]
+        record_id = f"subcontract-coverage-exhausted:{usage.subcontract_id}:{usage.inclusion_id}"
+        notification = {
+            "id": record_id,
+            "type": "subcontract-coverage-exhausted",
+            "title": "Sub-contract coverage exhausted",
+            "contractNumber": payload.get("mainContractNumber", ""),
+            "subcontractNumber": payload.get("number", ""),
+            "customer": payload.get("customer", ""),
+            "maintenancePackage": matched_package,
+            "inclusionDescription": inclusion.get("itemDescription", ""),
+            "recipientGroup": "Customer Support Management Group",
+            "recipientUserIds": [user.get("id") for user in recipients],
+            "workNotes": f"{inclusion.get('itemDescription', 'Maintenance inclusion')} has reached its maximum allowed coverage of {total_quantity}.",
+            "read": False,
+            "createdAt": datetime.now(UTC).isoformat(),
+        }
+        existing = database.scalar(select(NotificationRecord).where(NotificationRecord.record_id == record_id))
+        if not existing:
+            database.add(NotificationRecord(record_id=record_id, payload=notification))
+            notifications.append(notification)
+
+    packages[matched_package][matched_index] = inclusion
+    payload["maintenancePackages"] = packages
+    subcontract_record.payload = payload
+    database.commit()
+    return {"subcontract": payload, "notifications": notifications}
 
 
 @router.post("/warranty-expiry")

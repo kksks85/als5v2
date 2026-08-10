@@ -344,7 +344,7 @@ const emptyForm = {
   spares: [{ name: '', partNumber: '', serialNumber: '', quantity: 1 }]
 }
 
-export default function ContractsPage({ contracts, setContracts }) {
+export default function ContractsPage({ contracts, setContracts, onCreateSubcontract }) {
   const [showForm, setShowForm] = useState(false)
   const [selectedContract, setSelectedContract] = useState(null)
   const [editingContract, setEditingContract] = useState(null)
@@ -392,7 +392,7 @@ export default function ContractsPage({ contracts, setContracts }) {
 
   if (showForm) return <ContractForm onCancel={() => setShowForm(false)} onSubmit={createContract} />
   if (editingContract) return <ContractForm contract={editingContract} onCancel={() => setEditingContract(null)} onSubmit={updateContract} />
-  if (selectedContract) return <ContractDetail contract={selectedContract} onCancel={() => setSelectedContract(null)} onEdit={() => { setEditingContract(selectedContract); setSelectedContract(null) }} />
+  if (selectedContract) return <ContractDetail contract={selectedContract} onCancel={() => setSelectedContract(null)} onEdit={() => { setEditingContract(selectedContract); setSelectedContract(null) }} onCreateSubcontract={onCreateSubcontract} />
   if (deleteConfirm) return <DeleteConfirmation contract={deleteConfirm} onConfirm={(id) => deleteContract(id)} onCancel={() => setDeleteConfirm(null)} />
 
   return (
@@ -446,11 +446,11 @@ function ContractForm({ contract, onCancel, onSubmit }) {
   </form>
 }
 
-function ContractDetail({ contract, onCancel, onEdit }) {
+function ContractDetail({ contract, onCancel, onEdit, onCreateSubcontract }) {
   const normalizedContract = normalizeWarrantyStatus(contract)
   const activeCoverage = normalizedContract.subcontracts.filter((subcontract) => subcontractStatus(subcontract) === 'Active')
   return <section className="customer-detail-page">
-    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract.number}</h1><p className="customer-detail-subtitle">{contract.customer}</p></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></div></header>
+    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract.number}</h1><p className="customer-detail-subtitle">{contract.customer}</p></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={() => onCreateSubcontract?.(contract.number)}><Plus size={15} /> New sub-contract</button><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></div></header>
     <section className="customer-detail-sheet">
       <section className="detail-section"><h2>Contract Details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Contract Number</span><span className="detail-value">{contract.number}</span></div><div className="detail-field"><span className="detail-label">Customer</span><span className="detail-value">{contract.customer}</span></div><div className="detail-field"><span className="detail-label">Status</span><span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span></div><div className="detail-field"><span className="detail-label">Warranty</span><span className="detail-value">{normalizedContract.warranty}</span></div><div className="detail-field"><span className="detail-label">Active coverage</span><span className="detail-value">{activeCoverage.length ? activeCoverage.map((subcontract) => <span key={subcontract.id} className="badge">{subcontract.type}</span>) : '--'}</span></div><div className="detail-field"><span className="detail-label">System</span><span className="detail-value">{contract.system || '--'}</span></div></div></section>
       <section className="detail-section"><h2>Important Dates</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Entry Date</span><span className="detail-value">{formatDate(contract.entryDate)}</span></div><div className="detail-field"><span className="detail-label">JRI Date</span><span className="detail-value">{formatDate(contract.jriDate)}</span></div><div className="detail-field"><span className="detail-label">Expiry Date</span><span className="detail-value">{formatDate(contract.expiryDate)}</span></div></div></section>

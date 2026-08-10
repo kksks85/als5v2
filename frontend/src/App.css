@@ -1051,6 +1051,27 @@ main { min-width:0; display:flex; flex-direction:column; }
 .replacement-parts-panel { min-height:0; }
 .replacement-parts-panel > .repair-completed-check { display:inline-flex; align-items:center; gap:5px; min-height:27px; margin:0 0 8px auto; padding:0 8px; border:1px solid #d6e2ec; border-radius:3px; color:#355b7b; background:#fff; font-size:10px; font-weight:750; white-space:nowrap; }
 .replacement-parts-panel > .repair-completed-check input { width:13px; height:13px; margin:0; accent-color:#2f75c6; }
+.replacement-source-panel { margin:0 0 10px; border:1px solid #d6e2ec; background:#fbfdff; }
+.replacement-source-panel > header { padding:9px 11px 8px; border-bottom:1px solid #e1eaf2; background:#f4f8fc; }
+.replacement-source-panel > header strong,.replacement-source-panel > header span { display:block; }
+.replacement-source-panel > header strong { color:#244f7d; font-size:11px; }
+.replacement-source-panel > header span { margin-top:2px; color:#6f87a0; font-size:10px; }
+.replacement-source-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:10px 11px; }
+.replacement-source-options label { display:grid; grid-template-columns:16px minmax(0,1fr); gap:8px; align-items:start; min-height:58px; padding:10px; border:1px solid #d7e4ee; border-radius:4px; color:#426481; background:#fff; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
+.replacement-source-options label:hover { border-color:#9ec4e8; background:#f8fbfe; }
+.replacement-source-options label.selected { border-color:#3a7dda; background:#f2f8ff; box-shadow:inset 3px 0 #3a7dda; }
+.replacement-source-options input { width:15px; height:15px; margin:2px 0 0; accent-color:#2f75c6; }
+.replacement-source-options input:disabled { cursor:not-allowed; }
+.replacement-source-options span,.replacement-source-options strong,.replacement-source-options small { display:block; }
+.replacement-source-options strong { color:#285a88; font-size:11px; }
+.replacement-source-options small { margin-top:3px; color:#7088a1; font-size:10px; line-height:1.35; }
+.replacement-tasl-reason { display:block; margin:0 11px 11px; padding:10px; border:1px solid #c9dceb; border-left:3px solid #3a7dda; background:#f4f9fe; }
+.replacement-tasl-reason > span,.replacement-tasl-reason strong,.replacement-tasl-reason small { display:block; }
+.replacement-tasl-reason strong { color:#285a88; font-size:11px; }
+.replacement-tasl-reason small { margin-top:2px; color:#6d86a0; font-size:10px; }
+.replacement-tasl-reason textarea { box-sizing:border-box; width:100%; min-height:70px; margin-top:8px; padding:8px 9px; border:1px solid #a9c8e2; border-radius:3px; color:#315c84; background:#fff; font:inherit; font-size:11px; line-height:1.45; resize:vertical; }
+.replacement-tasl-reason textarea:focus { border-color:#3a7dda; outline:0; box-shadow:0 0 0 2px rgba(58,125,218,.11); }
+.replacement-tasl-reason textarea:disabled { color:#8194a7; background:#f5f7f9; }
 .replacement-parts-panel { min-height:0; }
 .replacement-request-card { border:1px solid #d6e2ec; background:#fff; }
 .replacement-request-card > header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #e1eaf2; background:#f7fbff; }
@@ -1073,7 +1094,7 @@ main { min-width:0; display:flex; flex-direction:column; }
 .incident-saved-message { margin-right:auto; color:#16705e; font-size:11px; font-weight:700; }
 .incident-submit-error { margin-right:auto; color:#b64842; font-size:11px; font-weight:700; }
 @media(max-width:900px){.incident-work-area{margin:0 14px 14px}.incident-detail-section{padding:13px 14px}}
-@media(max-width:600px){.incident-detail-page .incident-form-grid{grid-template-columns:1fr}.incident-detail-page .incident-field:has(textarea){grid-column:auto}.incident-lifecycle{padding:12px 14px}.incident-detail-section{padding:12px}.incident-work-area{margin:0 12px 12px;padding:0 10px 10px}}
+@media(max-width:600px){.incident-detail-page .incident-form-grid{grid-template-columns:1fr}.incident-detail-page .incident-field:has(textarea){grid-column:auto}.incident-lifecycle{padding:12px 14px}.incident-detail-section{padding:12px}.incident-work-area{margin:0 12px 12px;padding:0 10px 10px}.replacement-source-options{grid-template-columns:1fr}}
 
 /* ========== CUSTOMER PAGE STYLES ========== */
 .content:has(.customer-list-page) { max-width:none; padding:16px 18px 24px; }

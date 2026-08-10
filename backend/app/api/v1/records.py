@@ -8,13 +8,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductRecord, RepairExecutionRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, RepairExecutionRecord, SubcontractRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
 ALLOWED_RESOURCES = {
     "customers",
     "contracts",
+    "subcontracts",
     "products",
     "product_assets",
     "incidents",
@@ -34,6 +35,7 @@ ALLOWED_RESOURCES = {
 RESOURCE_MODELS = {
     "customers": CustomerRecord,
     "contracts": ContractRecord,
+    "subcontracts": SubcontractRecord,
     "products": ProductRecord,
     "product_assets": ProductAssetRecord,
     "incidents": IncidentRecord,
@@ -50,6 +52,19 @@ RESOURCE_MODELS = {
     "mail_correspondence": MailCorrespondenceRecord,
     "calendar_events": CalendarEventRecord,
 }
+PRODUCT_MASTER_RESOURCES = {
+    "mcs_products",
+    "gdt_products",
+    "mast_products",
+    "simulator_products",
+    "tmv_products",
+    "battery_products",
+    "warhead_sam_products",
+    "tools_products",
+    "mrls_products",
+    "sme_ste_products",
+    "gse_products",
+}
 
 
 class RecordInput(BaseModel):
@@ -62,7 +77,7 @@ class BulkRecordsInput(BaseModel):
 
 
 def validate_resource(resource: str) -> str:
-    if resource not in ALLOWED_RESOURCES:
+    if resource not in ALLOWED_RESOURCES and resource not in PRODUCT_MASTER_RESOURCES:
         raise HTTPException(status_code=404, detail="Unknown record resource.")
     return resource
 
@@ -70,6 +85,9 @@ def validate_resource(resource: str) -> str:
 @router.get("/{resource}")
 def list_records(resource: str, database: Session = Depends(get_db)) -> dict[str, list[dict[str, Any]]]:
     validate_resource(resource)
+    if resource in PRODUCT_MASTER_RESOURCES:
+        records = database.scalars(select(ProductMasterRecord).where(ProductMasterRecord.resource == resource).order_by(ProductMasterRecord.record_id)).all()
+        return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
     model = RESOURCE_MODELS[resource]
     records = database.scalars(select(model).order_by(model.record_id)).all()
     return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
@@ -97,7 +115,10 @@ def bulk_upsert_records(resource: str, body: BulkRecordsInput, database: Session
 def replace_records(resource: str, body: BulkRecordsInput, database: Session = Depends(get_db)) -> dict[str, int]:
     """Synchronize a complete client collection, including removals, atomically."""
     validate_resource(resource)
-    database.execute(delete(RESOURCE_MODELS[resource]))
+    if resource in PRODUCT_MASTER_RESOURCES:
+        database.execute(delete(ProductMasterRecord).where(ProductMasterRecord.resource == resource))
+    else:
+        database.execute(delete(RESOURCE_MODELS[resource]))
     write_records(resource, body.records, database)
     database.commit()
     return {"saved": len(body.records)}
@@ -106,6 +127,10 @@ def replace_records(resource: str, body: BulkRecordsInput, database: Session = D
 @router.delete("/{resource}/{record_id}")
 def delete_record(resource: str, record_id: str, database: Session = Depends(get_db)) -> dict[str, str]:
     validate_resource(resource)
+    if resource in PRODUCT_MASTER_RESOURCES:
+        database.execute(delete(ProductMasterRecord).where(ProductMasterRecord.resource == resource, ProductMasterRecord.record_id == record_id))
+        database.commit()
+        return {"status": "deleted", "record_id": record_id}
     model = RESOURCE_MODELS[resource]
     database.execute(delete(model).where(model.record_id == record_id))
     database.commit()
@@ -116,6 +141,17 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
     if not records:
         return
     now = datetime.now(UTC)
+    if resource in PRODUCT_MASTER_RESOURCES:
+        statement = insert(ProductMasterRecord).values([
+            {"resource": resource, "record_id": record.record_id, "payload": record.payload, "updated_at": now}
+            for record in records
+        ])
+        statement = statement.on_conflict_do_update(
+            constraint="uq_product_master_records_resource_record_id",
+            set_={"payload": statement.excluded.payload, "updated_at": statement.excluded.updated_at},
+        )
+        database.execute(statement)
+        return
     model = RESOURCE_MODELS[resource]
     def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if resource != "incidents":

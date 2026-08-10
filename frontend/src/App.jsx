@@ -11,7 +11,10 @@ import OverviewPage from './pages/OverviewPage'
 import IncidentsPage from './pages/IncidentsPage'
 import CustomersPage, { initialCustomers } from './pages/CustomersPage'
 import ContractsPage, { initialContracts, normalizeWarrantyStatus } from './pages/ContractsPage'
+import SubcontractsPage from './pages/SubcontractsPage'
 import ProductMasterPage, { seedProducts } from './pages/ProductMasterPage'
+import ProductMasterMcsPage from './pages/ProductMasterMcsPage'
+import ProductMasterGdtPage, { batteryProductColumns, gseProductColumns, mrlsProductColumns, simulatorProductColumns, smeSteProductColumns, tmvProductColumns, toolsProductColumns, warheadSamProductColumns } from './pages/ProductMasterGdtPage'
 import ProductCategoryPage from './pages/ProductCategoryPage'
 import UserManagementPage, { initialUsers } from './pages/UserManagementPage'
 import AssignmentGroupsPage from './pages/AssignmentGroupsPage'
@@ -26,8 +29,9 @@ import KnowledgeManagementPage, { seedDocuments } from './pages/KnowledgeManagem
 import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
 import { authenticationApi, notificationApi, recordApi } from './data/api'
-import { getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
-import { getConfiguredProcesses, getNextProcessStage, processConfigurationStorageKey } from './data/processConfiguration'
+import { ensureProductCategoryContractDeliverables, getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
+import { getConfiguredProcesses, getNextProcessStage, normalizeSiteRepairAcceptanceStages, processConfigurationStorageKey } from './data/processConfiguration'
+import { seedBatteryProducts, seedGdtProducts, seedGseProducts, seedMastProducts, seedMcsProducts, seedMrlsProducts, seedSimulatorProducts, seedSmeSteProducts, seedTmvProducts, seedToolsProducts, seedWarheadSamProducts } from './data/productMasterSeeds'
 
 /* ──────────────────────────────────────────
    Navigation config
@@ -37,7 +41,8 @@ const workspaceNav = [
   { key: 'Incidents', label: 'Incidents', icon: ClipboardList },
   { key: 'Customers', label: 'Customers', icon: Building2 },
   { key: 'Contracts', label: 'Contracts', icon: FileText },
-  { key: 'Product master', label: 'Product master', icon: Package },
+  { key: 'Sub-contracts', label: 'Sub-contracts', icon: FileText },
+  { key: 'Inventory Master', label: 'Inventory Master', icon: Package },
   { key: 'Product categories', label: 'Product categories', icon: Package },
   { key: 'Knowledge management', label: 'Knowledge management', icon: BookOpen },
   { key: 'Mail correspondence', label: 'Mail Correspondence', icon: Mail },
@@ -60,6 +65,46 @@ const configuredCustomers = ['All customers', 'Indian Air Force', 'Indian Army',
 const customerContactMigrationKey = 'als50-customer-contacts-rank-designation-v1'
 const legacyIncidentOpenedValue = '22 Jul 2026 10:30'
 const componentSerialJournalMigrationKey = 'als50-product-component-serial-journal-v3'
+const nonLmProductMasterResources = new Set([
+  'mcs_products', 'gdt_products', 'mast_products', 'simulator_products', 'tmv_products', 'battery_products',
+  'warhead_sam_products', 'tools_products', 'mrls_products', 'sme_ste_products', 'gse_products',
+])
+const productMasterCategoryDefinitions = [
+  ['Mission Control Station (MCS)', 'mcsProducts'],
+  ['Ground Data Terminal (GDT)', 'gdtProducts'],
+  ['MAST', 'mastProducts'],
+  ['Simulator', 'simulatorProducts'],
+  ['Tactical Mobility Vehicle (TMV)', 'tmvProducts'],
+  ['Batteries', 'batteryProducts'],
+  ['Warhead / SAM', 'warheadSamProducts'],
+  ['Tools', 'toolsProducts'],
+  ['MRLS', 'mrlsProducts'],
+  ['SME / STE', 'smeSteProducts'],
+  ['Ground Support Equipment (GSE)', 'gseProducts'],
+]
+const contractSystemByNumber = {
+  'TASL-CTR-2026-001': 'SRLM',
+  'TASL-CTR-2025-002': 'ERLM',
+  'TASL-CTR-IA-002': 'ERLM',
+  'TASL-CTR-2026-002': 'SRLM - IA',
+  'TASL-CTR-2026-003': 'ERLM',
+  'TASL-CTR-2024-001': 'SRLM - SF',
+  'TASL-CTR-2023-001': 'SRLM',
+  'TASL-CTR-2022-001': 'ERLM',
+  'TASL-CTR-2024-002': 'SRLM - IA',
+  'TASL-CTR-2025-001': 'SRLM',
+  'TASL-CTR-2026-004': 'SRLM - SF',
+}
+const normalizeContractSystem = (contract) => ({ ...contract, system: contractSystemByNumber[contract.number] || contract.system || '' })
+const normalizeCategoryComponents = (records, category) => records.map((record) => ({
+  ...record,
+  product_category: category,
+  batch_or_po_number: record.batch_or_po_number || record.batch_number || '',
+  material_serial_number: record.material_serial_number || record.item_serial_number || `${record.product_serial_number || 'PRODUCT'}-${record.part_number || 'COMPONENT'}`,
+  required_quantity: record.required_quantity || record.quantity || '',
+  route_card_description: record.route_card_description || '',
+  subsystems: record.subsystems || category,
+}))
 const initialRepairExecutions = [
   'Incident Registration',
   'Repair at Factory - In-house',
@@ -352,6 +397,7 @@ function Dashboard({ user, onLogout }) {
   const [productAssetDrill, setProductAssetDrill] = useState(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
+  const [inventoryMasterNavigationOpen, setInventoryMasterNavigationOpen] = useState(true)
   const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(true)
   const [incidentNavigationOpen, setIncidentNavigationOpen] = useState(true)
   const [approvalCenterOpen, setApprovalCenterOpen] = useState(true)
@@ -360,7 +406,20 @@ function Dashboard({ user, onLogout }) {
   const [customers, setCustomers] = useState(initialCustomers)
   const [incidents, setIncidents] = useState([])
   const [contracts, setContracts] = useState(initialContracts)
+  const [subcontracts, setSubcontracts] = useState([])
+  const [pendingSubcontractContract, setPendingSubcontractContract] = useState('')
   const [products, setProducts] = useState(seedProducts)
+  const [mcsProducts, setMcsProducts] = useState(seedMcsProducts)
+  const [gdtProducts, setGdtProducts] = useState(seedGdtProducts)
+  const [mastProducts, setMastProducts] = useState(seedMastProducts)
+  const [simulatorProducts, setSimulatorProducts] = useState(seedSimulatorProducts)
+  const [tmvProducts, setTmvProducts] = useState(seedTmvProducts)
+  const [batteryProducts, setBatteryProducts] = useState(seedBatteryProducts)
+  const [warheadSamProducts, setWarheadSamProducts] = useState(seedWarheadSamProducts)
+  const [toolsProducts, setToolsProducts] = useState(seedToolsProducts)
+  const [mrlsProducts, setMrlsProducts] = useState(seedMrlsProducts)
+  const [smeSteProducts, setSmeSteProducts] = useState(seedSmeSteProducts)
+  const [gseProducts, setGseProducts] = useState(seedGseProducts)
   const [productAssets, setProductAssets] = useState([])
   const [knowledgeDocuments, setKnowledgeDocuments] = useState(seedDocuments)
   const [mailCorrespondence, setMailCorrespondence] = useState([])
@@ -392,6 +451,16 @@ function Dashboard({ user, onLogout }) {
       { i: 'report-open-incidents-aging', x: 6, y: 4, w: 6, h: 4, minW: 3, minH: 3 },
     ]
   })
+  const categoryProducts = useMemo(() => {
+    const masterCollections = {
+      mcsProducts, gdtProducts, mastProducts, simulatorProducts, tmvProducts, batteryProducts,
+      warheadSamProducts, toolsProducts, mrlsProducts, smeSteProducts, gseProducts,
+    }
+    return [
+      ...products,
+      ...productMasterCategoryDefinitions.flatMap(([category, collection]) => normalizeCategoryComponents(masterCollections[collection], category)),
+    ]
+  }, [batteryProducts, gdtProducts, gseProducts, mastProducts, mcsProducts, mrlsProducts, products, simulatorProducts, smeSteProducts, tmvProducts, toolsProducts, warheadSamProducts])
 
   useEffect(() => { localStorage.setItem('als50-report-library', JSON.stringify(reports)) }, [reports])
   useEffect(() => { localStorage.setItem(dashboardStorageKey, JSON.stringify(dashboardLayout)) }, [dashboardLayout, dashboardStorageKey])
@@ -414,7 +483,19 @@ function Dashboard({ user, onLogout }) {
     const collections = [
       { resource: 'customers', records: customers, setRecords: setCustomers, key: (record) => record.id || record.name },
       { resource: 'contracts', records: contracts, setRecords: setContracts, key: (record) => record.id || record.number },
+      { resource: 'subcontracts', records: subcontracts, setRecords: setSubcontracts, key: (record) => record.id },
       { resource: 'products', records: products, setRecords: setProducts, key: (record) => record.productRecordId || record.material_serial_number || record.product_serial_number },
+      { resource: 'mcs_products', records: mcsProducts, setRecords: setMcsProducts, key: (record) => record.id },
+      { resource: 'gdt_products', records: gdtProducts, setRecords: setGdtProducts, key: (record) => record.id },
+      { resource: 'mast_products', records: mastProducts, setRecords: setMastProducts, key: (record) => record.id },
+      { resource: 'simulator_products', records: simulatorProducts, setRecords: setSimulatorProducts, key: (record) => record.id },
+      { resource: 'tmv_products', records: tmvProducts, setRecords: setTmvProducts, key: (record) => record.id },
+      { resource: 'battery_products', records: batteryProducts, setRecords: setBatteryProducts, key: (record) => record.id },
+      { resource: 'warhead_sam_products', records: warheadSamProducts, setRecords: setWarheadSamProducts, key: (record) => record.id },
+      { resource: 'tools_products', records: toolsProducts, setRecords: setToolsProducts, key: (record) => record.id },
+      { resource: 'mrls_products', records: mrlsProducts, setRecords: setMrlsProducts, key: (record) => record.id },
+      { resource: 'sme_ste_products', records: smeSteProducts, setRecords: setSmeSteProducts, key: (record) => record.id },
+      { resource: 'gse_products', records: gseProducts, setRecords: setGseProducts, key: (record) => record.id },
       { resource: 'product_assets', records: productAssets, setRecords: setProductAssets, key: (record) => record.id },
       { resource: 'incidents', records: incidents, setRecords: setIncidents, key: (record) => record.id },
       { resource: 'knowledge_documents', records: knowledgeDocuments, setRecords: setKnowledgeDocuments, key: (record) => record.id || record.number || record.title },
@@ -431,6 +512,15 @@ function Dashboard({ user, onLogout }) {
         await Promise.all(collections.map(async ({ resource, records, setRecords, key }) => {
           const stored = await recordApi.list(resource)
           if (stored.length) {
+            const needsProductSerialNumberMigration = nonLmProductMasterResources.has(resource)
+              && stored.some((record) => !record.payload.product_serial_number)
+            if (needsProductSerialNumberMigration) {
+              const initialRecords = records.map((record) => ({ record_id: String(key(record)), payload: record }))
+              await recordApi.replace(resource, initialRecords)
+              if (active) setRecords(records)
+              persistedCollections.current[resource] = new Map(initialRecords.map((record) => [record.record_id, JSON.stringify(record.payload)]))
+              return
+            }
             const persistedRecords = stored.map((record) => resource === 'products'
               ? { ...record.payload, productRecordId: record.payload.productRecordId || record.record_id }
               : record.payload)
@@ -438,7 +528,7 @@ function Dashboard({ user, onLogout }) {
               ? persistedRecords.map((group) => group.name === 'Customer Support Manager' ? { ...group, name: 'Customer Support Management Group' } : group.name === 'Advisory Team' ? { ...group, name: 'Advisory Group' } : group)
               : resource === 'customers' ? reseedCustomerContacts(persistedRecords)
                 : resource === 'incidents' ? normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(persistedRecords))
-                  : resource === 'process_configurations' ? normalizeProcessAssignmentGroups(persistedRecords)
+                  : resource === 'process_configurations' ? normalizeSiteRepairAcceptanceStages(normalizeProcessAssignmentGroups(persistedRecords))
                     : persistedRecords)
             persistedCollections.current[resource] = new Map(stored.map((record) => [record.record_id, JSON.stringify(record.payload)]))
             return
@@ -462,18 +552,46 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     if (!persistenceReady) return
     setContracts((current) => {
-      const normalized = current.map(normalizeWarrantyStatus)
+      const normalized = ensureProductCategoryContractDeliverables(current.map((contract) => normalizeContractSystem(normalizeWarrantyStatus(contract))), categoryProducts)
       return JSON.stringify(normalized) === JSON.stringify(current) ? current : normalized
     })
-  }, [persistenceReady])
+  }, [categoryProducts, persistenceReady])
+
+  useEffect(() => {
+    if (!persistenceReady) return
+    setSubcontracts((current) => {
+      const migrated = contracts.flatMap((contract) => (contract.subcontracts || []).filter((entry) => entry.number).map((entry) => ({
+        id: entry.id || `legacy-subcontract-${contract.number}-${entry.number}`,
+        type: entry.type === 'CMC' ? 'CAMC' : entry.type || 'AMC',
+        number: entry.number,
+        mainContractNumber: contract.number,
+        customer: contract.customer,
+        validFrom: entry.validFrom || '',
+        validTo: entry.validTo || '',
+        attachments: [],
+        extractedText: '',
+        maintenancePackages: { scheduled: [], assorted: [], unscheduled: [] },
+      })).filter((legacy) => !current.some((entry) => entry.number === legacy.number && entry.mainContractNumber === legacy.mainContractNumber)))
+      return migrated.length ? [...current, ...migrated] : current
+    })
+  }, [contracts, persistenceReady])
+
+  useEffect(() => {
+    if (!persistenceReady) return
+    setContracts((current) => current.map((contract) => {
+      const linked = subcontracts.filter((entry) => entry.mainContractNumber === contract.number).map((entry) => ({ id: entry.id, type: entry.type === 'CMC' ? 'CAMC' : entry.type, number: entry.number, validFrom: entry.validFrom, validTo: entry.validTo }))
+      const next = normalizeWarrantyStatus({ ...contract, subcontracts: linked })
+      return JSON.stringify(next) === JSON.stringify(contract) ? contract : next
+    }))
+  }, [persistenceReady, subcontracts])
 
   useEffect(() => {
     if (!persistenceReady) return
     setProductAssets((current) => {
-      const reconciled = reconcileProductAssets(products, contracts, current)
+      const reconciled = reconcileProductAssets(categoryProducts, contracts, current)
       return JSON.stringify(reconciled) === JSON.stringify(current) ? current : reconciled
     })
-  }, [contracts, persistenceReady, products])
+  }, [categoryProducts, contracts, persistenceReady])
 
   useEffect(() => {
     if (!persistenceReady || !contracts.length) return
@@ -534,7 +652,19 @@ function Dashboard({ user, onLogout }) {
     const collections = [
       ['customers', customers, (record) => record.id || record.name],
       ['contracts', contracts, (record) => record.id || record.number],
+      ['subcontracts', subcontracts, (record) => record.id],
       ['products', products, (record) => record.productRecordId || record.material_serial_number || record.product_serial_number],
+      ['mcs_products', mcsProducts, (record) => record.id],
+      ['gdt_products', gdtProducts, (record) => record.id],
+      ['mast_products', mastProducts, (record) => record.id],
+      ['simulator_products', simulatorProducts, (record) => record.id],
+      ['tmv_products', tmvProducts, (record) => record.id],
+      ['battery_products', batteryProducts, (record) => record.id],
+      ['warhead_sam_products', warheadSamProducts, (record) => record.id],
+      ['tools_products', toolsProducts, (record) => record.id],
+      ['mrls_products', mrlsProducts, (record) => record.id],
+      ['sme_ste_products', smeSteProducts, (record) => record.id],
+      ['gse_products', gseProducts, (record) => record.id],
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
@@ -547,7 +677,7 @@ function Dashboard({ user, onLogout }) {
       ['notifications', notifications, (record) => record.id],
     ]
     collections.forEach(([resource, records, key]) => {
-      if (resource === 'product_assets' && !records.length && products.length) return
+      if (resource === 'product_assets' && !records.length && categoryProducts.length) return
       const nextRecords = records.map((record) => ({ record_id: String(key(record)), payload: record }))
       const previousRecords = persistedCollections.current[resource] || new Map()
       const nextRecordMap = new Map(nextRecords.map((record) => [record.record_id, JSON.stringify(record.payload)]))
@@ -561,13 +691,25 @@ function Dashboard({ user, onLogout }) {
         persistedCollections.current[resource] = nextRecordMap
       }).catch((error) => console.warn(`Unable to save ${resource}.`, error))
     })
-  }, [assignmentGroups, calendarEvents, contracts, customers, incidents, knowledgeDocuments, mailCorrespondence, notifications, persistenceReady, processes, productAssets, products, repairExecutions, users])
+  }, [assignmentGroups, batteryProducts, calendarEvents, categoryProducts, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, persistenceReady, processes, productAssets, products, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warheadSamProducts])
 
   useEffect(() => {
     const collections = [
       ['customers', customers, (record) => record.id || record.name],
       ['contracts', contracts, (record) => record.id || record.number],
+      ['subcontracts', subcontracts, (record) => record.id],
       ['products', products, (record) => record.productRecordId || record.material_serial_number || record.product_serial_number],
+      ['mcs_products', mcsProducts, (record) => record.id],
+      ['gdt_products', gdtProducts, (record) => record.id],
+      ['mast_products', mastProducts, (record) => record.id],
+      ['simulator_products', simulatorProducts, (record) => record.id],
+      ['tmv_products', tmvProducts, (record) => record.id],
+      ['battery_products', batteryProducts, (record) => record.id],
+      ['warhead_sam_products', warheadSamProducts, (record) => record.id],
+      ['tools_products', toolsProducts, (record) => record.id],
+      ['mrls_products', mrlsProducts, (record) => record.id],
+      ['sme_ste_products', smeSteProducts, (record) => record.id],
+      ['gse_products', gseProducts, (record) => record.id],
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
@@ -580,14 +722,26 @@ function Dashboard({ user, onLogout }) {
       ['notifications', notifications, (record) => record.id],
     ]
     currentCollections.current = Object.fromEntries(collections.map(([resource, records, key]) => [resource, new Map(records.map((record) => [String(key(record)), JSON.stringify(record)]))]))
-  }, [assignmentGroups, calendarEvents, contracts, customers, incidents, knowledgeDocuments, mailCorrespondence, notifications, processes, productAssets, products, repairExecutions, users])
+  }, [assignmentGroups, batteryProducts, calendarEvents, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, processes, productAssets, products, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warheadSamProducts])
 
   useEffect(() => {
     if (!persistenceReady) return
     const collections = [
       ['customers', setCustomers, (record) => record.id || record.name],
       ['contracts', setContracts, (record) => record.id || record.number],
+      ['subcontracts', setSubcontracts, (record) => record.id],
       ['products', setProducts, (record) => record.productRecordId || record.material_serial_number || record.product_serial_number],
+      ['mcs_products', setMcsProducts, (record) => record.id],
+      ['gdt_products', setGdtProducts, (record) => record.id],
+      ['mast_products', setMastProducts, (record) => record.id],
+      ['simulator_products', setSimulatorProducts, (record) => record.id],
+      ['tmv_products', setTmvProducts, (record) => record.id],
+      ['battery_products', setBatteryProducts, (record) => record.id],
+      ['warhead_sam_products', setWarheadSamProducts, (record) => record.id],
+      ['tools_products', setToolsProducts, (record) => record.id],
+      ['mrls_products', setMrlsProducts, (record) => record.id],
+      ['sme_ste_products', setSmeSteProducts, (record) => record.id],
+      ['gse_products', setGseProducts, (record) => record.id],
       ['product_assets', setProductAssets, (record) => record.id],
       ['incidents', setIncidents, (record) => record.id],
       ['knowledge_documents', setKnowledgeDocuments, (record) => record.id || record.number || record.title],
@@ -657,8 +811,8 @@ function Dashboard({ user, onLogout }) {
   const addReportToDashboard = (reportId) => setDashboardLayout((current) => current.some((item) => item.i === reportId) ? current : [...current, { i: reportId, x: 0, y: Infinity, w: 6, h: 4, minW: 3, minH: 3 }])
   const removeReportFromDashboard = (reportId) => setDashboardLayout((current) => current.filter((item) => item.i !== reportId))
 
-  const applicationData = { customers, incidents, contracts, products, productAssets, knowledgeDocuments, users, assignmentGroups, notifications }
-  const productCategories = getProductCategories(products)
+  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, notifications }
+  const productCategories = getProductCategories(categoryProducts)
   const currentUserRecord = users.find((member) => member.email === user.email) || user
   const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
   const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
@@ -757,17 +911,29 @@ function Dashboard({ user, onLogout }) {
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
-      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={products} contracts={contracts} currentUser={user} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
+      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
       case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
-      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={products} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
+      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
-      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} />
+      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
+      case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} />
+      case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} />
+      case 'Product master GDT': return <ProductMasterGdtPage records={gdtProducts} setRecords={setGdtProducts} />
+      case 'Product master MAST': return <ProductMasterGdtPage records={mastProducts} setRecords={setMastProducts} masterName="MAST" idPrefix="mast" />
+      case 'Product master Simulator': return <ProductMasterGdtPage records={simulatorProducts} setRecords={setSimulatorProducts} masterName="Simulator" idPrefix="simulator" columns={simulatorProductColumns} />
+      case 'Product master TMV': return <ProductMasterGdtPage records={tmvProducts} setRecords={setTmvProducts} masterName="TMV" idPrefix="tmv" columns={tmvProductColumns} />
+      case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
+      case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
+      case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+      case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
+      case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
       case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} />
       case 'Mail correspondence': return <MailCorrespondencePage correspondence={mailCorrespondence} setCorrespondence={setMailCorrespondence} users={users} currentUser={user} />
       case 'My Calendar': return <MyCalendarPage
@@ -810,6 +976,10 @@ function Dashboard({ user, onLogout }) {
             if (key === 'Approval center') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Approval center:') ? 'active' : ''}`} aria-expanded={approvalCenterOpen} onClick={() => setApprovalCenterOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={approvalCenterOpen ? 'expanded' : ''} /></button>
               {approvalCenterOpen && <div className="nav-submenu">{['My Current Approvals', 'My Delegated Approvals'].map((item) => <button key={item} className={activePage === `Approval center: ${item}` ? 'active' : ''} onClick={() => { setActivePage(`Approval center: ${item}`); setMobileNavigationOpen(false) }}><span>{item}</span></button>)}</div>}
+            </div>
+            if (key === 'Inventory Master') return <div className="nav-group" key={key}>
+              <button className={`nav-item ${activePage === 'Product master' || activePage === 'Product master MCS' || activePage === 'Product master GDT' || activePage === 'Product master MAST' || activePage === 'Product master Simulator' || activePage === 'Product master TMV' || activePage === 'Product master Batteries' || activePage === 'Product master Warhead / SAM' || activePage === 'Product master Tools' || activePage === 'Product master MRLS' || activePage === 'Product master SME / STE' || activePage === 'Product master GSE' ? 'active' : ''}`} aria-expanded={inventoryMasterNavigationOpen} onClick={() => setInventoryMasterNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={inventoryMasterNavigationOpen ? 'expanded' : ''} /></button>
+              {inventoryMasterNavigationOpen && <div className="nav-submenu"><button className={activePage === 'Product master' ? 'active' : ''} onClick={() => { setActivePage('Product master'); setMobileNavigationOpen(false) }}><span>Product Master - LM</span></button><button className={activePage === 'Product master MCS' ? 'active' : ''} onClick={() => { setActivePage('Product master MCS'); setMobileNavigationOpen(false) }}><span>Product Master - MCS</span></button><button className={activePage === 'Product master GDT' ? 'active' : ''} onClick={() => { setActivePage('Product master GDT'); setMobileNavigationOpen(false) }}><span>Product Master - GDT</span></button><button className={activePage === 'Product master MAST' ? 'active' : ''} onClick={() => { setActivePage('Product master MAST'); setMobileNavigationOpen(false) }}><span>Product Master - MAST</span></button><button className={activePage === 'Product master Simulator' ? 'active' : ''} onClick={() => { setActivePage('Product master Simulator'); setMobileNavigationOpen(false) }}><span>Product Master - Simulator</span></button><button className={activePage === 'Product master TMV' ? 'active' : ''} onClick={() => { setActivePage('Product master TMV'); setMobileNavigationOpen(false) }}><span>Product Master - TMV</span></button><button className={activePage === 'Product master Batteries' ? 'active' : ''} onClick={() => { setActivePage('Product master Batteries'); setMobileNavigationOpen(false) }}><span>Product Master - Batteries</span></button><button className={activePage === 'Product master Warhead / SAM' ? 'active' : ''} onClick={() => { setActivePage('Product master Warhead / SAM'); setMobileNavigationOpen(false) }}><span>Product Master - Warhead / SAM</span></button><button className={activePage === 'Product master Tools' ? 'active' : ''} onClick={() => { setActivePage('Product master Tools'); setMobileNavigationOpen(false) }}><span>Product Master - Tools</span></button><button className={activePage === 'Product master MRLS' ? 'active' : ''} onClick={() => { setActivePage('Product master MRLS'); setMobileNavigationOpen(false) }}><span>Product Master - MRLS</span></button><button className={activePage === 'Product master SME / STE' ? 'active' : ''} onClick={() => { setActivePage('Product master SME / STE'); setMobileNavigationOpen(false) }}><span>Product Master - SME / STE</span></button><button className={activePage === 'Product master GSE' ? 'active' : ''} onClick={() => { setActivePage('Product master GSE'); setMobileNavigationOpen(false) }}><span>Product Master - GSE</span></button></div>}
             </div>
             if (key === 'Product categories') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Product category:') ? 'active' : ''}`} aria-expanded={categoryNavigationOpen} onClick={() => setCategoryNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={categoryNavigationOpen ? 'expanded' : ''} /></button>

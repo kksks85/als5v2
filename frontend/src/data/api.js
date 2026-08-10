@@ -77,4 +77,8 @@ export const notificationApi = {
     method: 'POST',
     body: JSON.stringify(notification),
   }),
+  consumeSubcontractCoverage: (usage) => request('/notifications/subcontract-coverage-usage', {
+    method: 'POST',
+    body: JSON.stringify(usage),
+  }),
 }

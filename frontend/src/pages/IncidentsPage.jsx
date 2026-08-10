@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDownUp, ArrowLeft, Camera, ChevronDown, ClipboardPlus, Download, Edit2, Eye, FileUp, Filter, History, ListChecks, Paperclip, Plus, Search, Star, Trash2, UserRound, Wrench, X } from 'lucide-react'
 import { getNextProcessStage, getProcessStage, getProcessStages } from '../data/processConfiguration'
 import { emailApi, recordApi } from '../data/api'
+import { productCategoryMatches } from '../data/productCategoryRegistry'
 
 const pageSize = 8
 const columns = [
@@ -154,13 +155,17 @@ const componentOptions = (records, serialNumber, subsystem) => [...new Set((reco
 const materialSerialNumberFor = (records, serialNumber, subsystem, materialDescription) => records.find((record) => record.serialNumber === serialNumber)?.components
   .find((component) => component.subsystem === subsystem && component.materialDescription === materialDescription)?.materialSerialNumber || 'Not Applicable'
 const componentKey = (component) => [component.subsystem, component.materialDescription, component.part_number || ''].join('::')
-const serialRecordsForCustomerContract = (records, assets, customer, contract) => {
-  if (!customer || !contract) return []
+const productCategoriesForCustomerContract = (assets, customer, contract) => [...new Set(assets
+  .filter((asset) => asset.customer === customer && asset.contractNumber === contract && asset.category)
+  .map((asset) => asset.category))]
+  .sort((first, second) => first.localeCompare(second))
+const serialRecordsForCustomerContractCategory = (records, assets, customer, category, contract) => {
+  if (!customer || !category || !contract) return []
   const eligibleSerialNumbers = new Set(assets
-    .filter((asset) => asset.customer === customer && asset.contractNumber === contract)
+    .filter((asset) => asset.customer === customer && asset.contractNumber === contract && productCategoryMatches(asset.category, category))
     .map((asset) => asset.serialNumber))
   return records
-    .filter((record) => eligibleSerialNumbers.has(record.serialNumber))
+    .filter((record) => eligibleSerialNumbers.has(record.serialNumber) && productCategoryMatches(record.category, category))
     .sort((first, second) => first.serialNumber.localeCompare(second.serialNumber, undefined, { numeric: true }))
 }
 const incidentComponentColumns = [
@@ -274,20 +279,27 @@ export default function IncidentsPage({ currentUser, assignmentGroups, users, cu
   }
 
   if (showForm) return <NewIncidentForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} processes={processes} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} onCancel={() => setShowForm(false)} onSubmit={createIncident} />
-  if (selectedIncident) return <IncidentDetailForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} currentUser={currentUser} products={products} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} incident={selectedIncident} initialActiveTab={initialDrill?.activeTab} onCancel={() => setSelectedIncident(null)} onSave={async (updates) => {
-    const { componentProductUpdates = [], mentionNotifications = [], ...incidentUpdates } = updates
+  if (selectedIncident) return <IncidentDetailForm assignmentGroups={assignmentGroups} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} currentUser={currentUser} products={products} productAssets={productAssets} serialNumberRecords={serialNumberRecords} users={users} incident={selectedIncident} allIncidents={incidents} initialActiveTab={initialDrill?.activeTab} onCancel={() => setSelectedIncident(null)} onSave={async (updates) => {
+    const { childIncident, componentProductUpdates = [], mentionNotifications = [], ...incidentUpdates } = updates
     const updatedIncident = { ...selectedIncident, ...incidentUpdates }
     const previousAssignmentGroup = selectedIncident.assignmentGroup || selectedIncident.group || ''
     const assignmentGroupChanged = Boolean(updatedIncident.assignmentGroup && updatedIncident.assignmentGroup !== previousAssignmentGroup)
-    await recordApi.bulkUpsert('incidents', [{ record_id: updatedIncident.id, payload: updatedIncident }])
+    await recordApi.bulkUpsert('incidents', [
+      { record_id: updatedIncident.id, payload: updatedIncident },
+      ...(childIncident ? [{ record_id: childIncident.id, payload: childIncident }] : []),
+    ])
     if (mentionNotifications.length) onCreateNotifications(mentionNotifications)
     if (assignmentGroupChanged) onCreateAssignmentNotifications(updatedIncident, updatedIncident.assignmentGroup)
+    if (childIncident?.assignmentGroup) onCreateAssignmentNotifications(childIncident, childIncident.assignmentGroup)
     if (componentProductUpdates.length) setProducts((current) => current.map((product) => {
       const update = componentProductUpdates.find((item) => item.productSerialNumber === product.product_serial_number && item.partNumber === product.part_number && item.subsystem === product.subsystems)
       if (!update) return product
       return { ...product, material_serial_number: update.next, productJournal: [...(product.productJournal || []), { id: `${Date.now()}-${Math.random()}`, updatedAt: new Date().toISOString(), updatedBy: currentUser.name || currentUser.email, incidentNumber: updatedIncident.id, field: 'Material Serial No', previous: product.material_serial_number || 'Not Applicable', next: update.next || 'Not Applicable' }] }
     }))
-    setIncidents((current) => current.map((item) => item.id === updatedIncident.id ? updatedIncident : item))
+    setIncidents((current) => [
+      ...current.map((item) => item.id === updatedIncident.id ? updatedIncident : item),
+      ...(childIncident && !current.some((item) => item.id === childIncident.id) ? [childIncident] : []),
+    ])
     setSelectedIncident(updatedIncident)
   }} />
 
@@ -314,7 +326,8 @@ function NewIncidentForm({ assignmentGroups, customers, contracts, processes, pr
   const workflowStages = getProcessStages(form.repairExecution, processes)
   const assignmentGroupOptions = activeGroupNames(assignmentGroups)
   const assignedToOptions = groupMemberNames(assignmentGroups, users, form.assignmentGroup)
-  const eligibleSerialNumberRecords = serialRecordsForCustomerContract(serialNumberRecords, productAssets, form.customer, form.contract)
+    const productCategoryOptions = productCategoriesForCustomerContract(productAssets, form.customer, form.contract)
+    const eligibleSerialNumberRecords = serialRecordsForCustomerContractCategory(serialNumberRecords, productAssets, form.customer, form.category, form.contract)
   const components = componentOptions(serialNumberRecords, form.serialNumber, form.subsystem)
   const selectAssignmentGroup = (assignmentGroup) => setForm((current) => ({ ...current, assignmentGroup, assignedTo: '' }))
   const selectedCustomer = findCustomerProfile(customers, contracts, form.customer)
@@ -331,23 +344,24 @@ function NewIncidentForm({ assignmentGroups, customers, contracts, processes, pr
     const contact = selectedCustomer?.contacts.find((entry) => entry.name === requestorName)
     setForm((current) => ({ ...current, requestor: requestorName, contact: contactValue(contact) }))
   }
+  const selectProductCategory = (category) => setForm((current) => ({ ...current, category, serialNumber: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
   const selectContract = (contractNumber) => {
     const contract = selectedCustomer?.contracts.find((entry) => entry.number === contractNumber)
-    setForm((current) => ({ ...current, contract: contractNumber, system: contract?.system || '', warranty: contract?.warranty || '', serialNumber: '', category: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
+    setForm((current) => ({ ...current, contract: contractNumber, system: contract?.system || '', warranty: contract?.warranty || '', category: '', serialNumber: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
   }
   const selectSerialNumber = (serialNumber) => {
     const record = serialNumberRecords.find((entry) => entry.serialNumber === serialNumber)
     setForm((current) => {
       const asset = productAssets.find((entry) => entry.serialNumber === serialNumber && entry.customer === current.customer && entry.contractNumber === current.contract)
         || productAssets.find((entry) => entry.serialNumber === serialNumber)
-      return { ...current, serialNumber, system: current.contract ? current.system : record?.system || '', category: record?.category || '', subsystem: record?.subsystems[0] || '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: asset?.lastServiced || '' }
+      return { ...current, serialNumber, system: current.contract ? current.system : record?.system || '', category: current.category || record?.category || '', subsystem: record?.subsystems[0] || '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: asset?.lastServiced || '' }
     })
   }
   const selectSubsystem = (subsystem) => setForm((current) => ({ ...current, subsystem, component: '', materialSerialNumber: 'Not Applicable' }))
   const selectComponent = (component) => setForm((current) => ({ ...current, component, materialSerialNumber: materialSerialNumberFor(serialNumberRecords, current.serialNumber, current.subsystem, component) }))
   const submit = async (event) => {
     event.preventDefault()
-    const nextErrors = Object.fromEntries(['customer', 'requestor', 'contract', 'serialNumber', 'component', 'materialSerialNumber', 'occurrencePhase', 'priority', 'assignmentGroup', 'assignedTo', 'shortDescription'].filter((key) => !form[key].trim()).map((key) => [key, 'Required']))
+    const nextErrors = Object.fromEntries(['customer', 'requestor', 'category', 'contract', 'serialNumber', 'component', 'materialSerialNumber', 'occurrencePhase', 'priority', 'assignmentGroup', 'assignedTo', 'shortDescription'].filter((key) => !form[key].trim()).map((key) => [key, 'Required']))
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length) {
       setSubmitError('Complete the required fields highlighted below before submitting the incident.')
@@ -366,8 +380,8 @@ function NewIncidentForm({ assignmentGroups, customers, contracts, processes, pr
     {workflowStages.length > 0 && <WorkflowProgress stages={workflowStages} currentStatus={form.status} compact />}
     <section className="incident-form-sheet">
       <FormSection icon={ClipboardPlus} title="Incident details"><Field label="Incident number"><div className="incident-auto-field">Auto-generated</div></Field><Field label="Created on"><div className="incident-auto-field">Auto-generated</div></Field><Field label="Current activity"><div className="incident-auto-field">Incident Registration</div></Field><Field label="Status"><div className="incident-auto-field">New</div></Field></FormSection>
-      <FormSection icon={UserRound} title="Customer & requestor" headerAction={<label className="incident-other-contact"><input type="checkbox" checked={form.customerOther} disabled={!form.customer} onChange={(event) => toggleCustomerOther(event.target.checked)} /> Customer other</label>}><Field label="Customer name" required error={errors.customer}><SelectField value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Requestor name" required error={errors.requestor}>{form.customerOther ? <input value={form.requestor} onChange={(event) => update('requestor', event.target.value)} placeholder="Enter requestor name" /> : <RequestorSelect customer={selectedCustomer} value={form.requestor} onChange={selectRequestor} />}</Field><Field label="Customer contract" required error={errors.contract}><SelectField value={form.contract} onChange={selectContract} options={selectedCustomer?.contracts.map((contract) => contract.number) || []} placeholder="Select customer first" /></Field><Field label="Requestor contact">{form.customerOther ? <input value={form.contact} onChange={(event) => update('contact', event.target.value)} placeholder="Enter phone number or email" /> : <input value={form.contact} readOnly placeholder="Auto-filled from requestor" />}</Field></FormSection>
-      <FormSection icon={Wrench} title="Product information"><SerialNumberReference records={eligibleSerialNumberRecords} value={form.serialNumber} onChange={selectSerialNumber} required error={errors.serialNumber} disabled={!form.customer || !form.contract} placeholder={form.contract ? 'Search serial number assigned to this contract' : 'Select customer and contract first'} hint={form.contract ? `${eligibleSerialNumberRecords.length} serial number${eligibleSerialNumberRecords.length === 1 ? '' : 's'} assigned to this customer contract` : 'Select customer and contract to view eligible serial numbers'} /><LookupField label="Product category" value={form.category} /><LookupField label="System type" value={form.system} /><SubsystemReference serialNumber={form.serialNumber} value={form.subsystem} records={serialNumberRecords} onChange={selectSubsystem} /><Field label="Component" required error={errors.component}><SelectField value={form.component} onChange={selectComponent} options={components} placeholder={form.subsystem ? 'Select material description' : 'Select sub-system first'} /></Field><Field label="Material serial number" required error={errors.materialSerialNumber}><input value={form.materialSerialNumber} onChange={(event) => update('materialSerialNumber', event.target.value)} placeholder="Not Applicable" /></Field></FormSection>
+      <FormSection icon={UserRound} title="Customer & requestor" headerAction={<label className="incident-other-contact"><input type="checkbox" checked={form.customerOther} disabled={!form.customer} onChange={(event) => toggleCustomerOther(event.target.checked)} /> Customer other</label>}><Field label="Customer name" required error={errors.customer}><SelectField value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Requestor name" required error={errors.requestor}>{form.customerOther ? <input value={form.requestor} onChange={(event) => update('requestor', event.target.value)} placeholder="Enter requestor name" /> : <RequestorSelect customer={selectedCustomer} value={form.requestor} onChange={selectRequestor} />}</Field><Field label="Customer contract" required error={errors.contract}><SelectField value={form.contract} onChange={selectContract} options={selectedCustomer?.contracts.map((contract) => contract.number) || []} placeholder={form.customer ? 'Select customer contract' : 'Select customer first'} disabled={!form.customer} /></Field><Field label="Requestor contact">{form.customerOther ? <input value={form.contact} onChange={(event) => update('contact', event.target.value)} placeholder="Enter phone number or email" /> : <input value={form.contact} readOnly placeholder="Auto-filled from requestor" />}</Field></FormSection>
+      <FormSection icon={Wrench} title="Product information"><Field label="Product category" required error={errors.category}><SelectField value={form.category} onChange={selectProductCategory} options={productCategoryOptions} placeholder={form.contract ? 'Select product category' : 'Select customer contract first'} disabled={!form.contract} /></Field><SerialNumberReference records={eligibleSerialNumberRecords} value={form.serialNumber} onChange={selectSerialNumber} required error={errors.serialNumber} disabled={!form.customer || !form.category || !form.contract} placeholder={form.category ? 'Search serial number assigned to this contract and product category' : 'Select product category first'} hint={form.category ? `${eligibleSerialNumberRecords.length} serial number${eligibleSerialNumberRecords.length === 1 ? '' : 's'} assigned to this customer contract and product category` : 'Select product category to view eligible serial numbers'} /><LookupField label="System type" value={form.system} /><SubsystemReference serialNumber={form.serialNumber} value={form.subsystem} records={serialNumberRecords} onChange={selectSubsystem} /><Field label="Component" required error={errors.component}><SelectField value={form.component} onChange={selectComponent} options={components} placeholder={form.subsystem ? 'Select material description' : 'Select sub-system first'} /></Field><Field label="Material serial number" required error={errors.materialSerialNumber}><input value={form.materialSerialNumber} onChange={(event) => update('materialSerialNumber', event.target.value)} placeholder="Not Applicable" /></Field></FormSection>
       <FormSection icon={AlertTriangle} title="Issue classification"><Field label="Occurrence phase" required error={errors.occurrencePhase}><SelectField value={form.occurrencePhase} onChange={(value) => setForm((current) => ({ ...current, occurrencePhase: value, priority: value === 'In Flight' ? 'High' : current.priority }))} options={['In Flight', 'Ground Operations']} placeholder="Select occurrence phase" required /></Field><Field label="Priority" required error={errors.priority}><SelectField value={form.priority} onChange={(value) => update('priority', value)} options={['Critical', 'High', 'Medium', 'Low']} placeholder="Select priority" priority /></Field><Field label="Assignment group"><SelectField value={form.assignmentGroup} onChange={selectAssignmentGroup} options={assignmentGroupOptions} placeholder="Select assignment group" /></Field><Field label="Assigned to" required error={errors.assignedTo}><SelectField value={form.assignedTo} onChange={(value) => update('assignedTo', value)} options={assignedToOptions} placeholder={form.assignmentGroup ? 'Select group member' : 'Select assignment group first'} /></Field></FormSection>
       <FormSection icon={History} title="Service history"><Field label="Warranty status"><input value={form.warranty} onChange={(event) => update('warranty', event.target.value)} placeholder="e.g., Active, Expired" /></Field><Field label="Last serviced on"><input type="date" value={form.lastServiced} onChange={(event) => update('lastServiced', event.target.value)} /></Field></FormSection>
       <section className="incident-description-section"><h2>Issue description</h2><Field label="Short description" required error={errors.shortDescription} hint="What is the main problem?"><input value={form.shortDescription} onChange={(event) => update('shortDescription', event.target.value)} placeholder="Brief summary of the issue" /></Field><Field label="Detailed description" hint="Include as much detail as possible to aid resolution"><textarea value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="Provide detailed information about the issue, steps to reproduce, error messages, etc." rows="5" /></Field><AttachmentSection attachments={form.attachments} onChange={(attachments) => update('attachments', attachments)} cameraCapture /></section>
@@ -383,12 +397,20 @@ function IncidentComponentsTable({ components, componentSerialNumbers, onChange,
   return <div className="incident-work-panel incident-components-panel"><div className="incident-components-summary"><div><strong>{serialNumber}</strong><span>{subsystem}</span></div><small>{components.length} component{components.length === 1 ? '' : 's'} · Only Material Serial No is editable</small></div><div className="incident-components-table"><table><thead><tr>{incidentComponentColumns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{components.map((component) => <tr key={componentKey(component)}>{incidentComponentColumns.map(([key]) => <td key={key}>{key === 'materialSerialNumber' ? <input aria-label={`Material serial number for ${component.materialDescription}`} disabled={readOnly} value={componentSerialNumbers[componentKey(component)] ?? component.materialSerialNumber} onChange={(event) => onChange(component, event.target.value)} /> : component[key] || '--'}</td>)}</tr>)}</tbody></table></div></div>
 }
 
-function ReplacementPartsPanel({ enabled, onToggle, parts, components, approval, onAdd, onRemove, onChange, onSubmit, canSubmit }) {
+function ReplacementPartsPanel({ enabled, onToggle, replacementSource, taslRequestReason, onSourceChange, onTaslRequestReasonChange, parts, components, approval, onAdd, onRemove, onChange, onSubmit, canSubmit }) {
   const locked = approval?.status === 'Pending' || approval?.status === 'Approved'
   const approved = approval?.status === 'Approved'
   return <section className="replacement-parts-panel">
     <label className="repair-completed-check"><input type="checkbox" checked={enabled} onChange={(event) => onToggle(event.target.checked)} /> <span>Part needs replacement</span></label>
     {enabled && <>
+      <section className="replacement-source-panel" aria-label="Replacement source">
+        <header><div><strong>Replacement source</strong><span>Select one fulfilment path for this replacement request.</span></div></header>
+        <div className="replacement-source-options">
+          <label className={replacementSource === 'mrls' ? 'selected' : ''}><input type="checkbox" checked={replacementSource === 'mrls'} disabled={locked} onChange={() => onSourceChange('mrls')} /><span><strong>Available in MRLS</strong><small>Request Advisory approval for MRLS stock.</small></span></label>
+          <label className={replacementSource === 'tasl' ? 'selected' : ''}><input type="checkbox" checked={replacementSource === 'tasl'} disabled={locked} onChange={() => onSourceChange('tasl')} /><span><strong>Request from TASL</strong><small>Record the supply request reason for Advisory review.</small></span></label>
+        </div>
+        {replacementSource === 'tasl' && <label className="replacement-tasl-reason"><span><strong>Request reason</strong><small>This note is added to the incident and sent to the Advisory Group.</small></span><textarea value={taslRequestReason} disabled={locked} onChange={(event) => onTaslRequestReasonChange(event.target.value)} placeholder="Explain why this part must be requested from TASL..." rows="3" /></label>}
+      </section>
       <div className={`replacement-request-card ${approval?.status?.toLowerCase() || 'draft'}`}>
         <header><div><strong>Replacement components</strong><span>{approval?.status === 'Pending' ? 'Awaiting Advisory Group decision' : approved ? 'Approved - enter replacement serial numbers' : 'Build the request before sending for approval'}</span></div><b>{approval?.status || 'Draft'}</b></header>
         <div className="replacement-part-list">{parts.length ? parts.map((part, index) => <article key={part.id}><header><strong>Component {index + 1}</strong><button type="button" className="icon-button danger" disabled={locked} title="Remove replacement component" onClick={() => onRemove(part.id)}><Trash2 size={14} /></button></header><div className="replacement-part-fields"><label><span>Component name</span><select value={part.componentKey} disabled={locked} onChange={(event) => onChange(part.id, { componentKey: event.target.value })}><option value="">Select component</option>{components.map((component) => <option key={componentKey(component)} value={componentKey(component)}>{component.materialDescription}</option>)}</select></label><label><span>Part number</span><output>{part.partNumber || '--'}</output></label><label><span>Current serial number</span><output>{part.currentSerialNumber || '--'}</output></label><label><span>New serial number</span><input value={part.newSerialNumber} disabled={!approved} onChange={(event) => onChange(part.id, { newSerialNumber: event.target.value })} placeholder={approved ? 'Enter new serial number' : 'Available after approval'} /></label></div></article>) : <div className="replacement-part-empty">No replacement components added. Use <strong>Add component</strong> to begin.</div>}</div>
@@ -483,7 +505,7 @@ function CameraCaptureDialog({ onCapture, onClose, onFallback }) {
   return <div className="camera-capture-backdrop"><section className="camera-capture-dialog" role="dialog" aria-modal="true" aria-label="Capture incident image"><header><div><h2>Capture image</h2><p>Use the device camera to attach a photograph to this incident.</p></div><button type="button" onClick={onClose} aria-label="Close camera"><X size={17} /></button></header>{error ? <div className="camera-error"><p>{error}</p><button type="button" className="compact-button secondary" onClick={onFallback}>Choose image</button></div> : <video ref={video} autoPlay playsInline muted />}<footer><button type="button" className="incident-cancel-button" onClick={onClose}>Cancel</button>{!error && <button type="button" className="incident-submit-button" onClick={capture}><Camera size={15} /> Capture</button>}</footer></section></div>
 }
 
-function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExecutions, processes, currentUser, products, productAssets, serialNumberRecords, users, incident, initialActiveTab, onCancel, onSave }) {
+function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExecutions, processes, currentUser, products, productAssets, serialNumberRecords, users, incident, allIncidents, initialActiveTab, onCancel, onSave }) {
   const initialCustomer = incident.id.includes('-IAF-') ? 'Indian Air Force' : 'Indian Army'
   const initialProfile = findCustomerProfile(customers, contracts, incident.customer || initialCustomer)
   const initialContract = initialProfile?.contracts.find((contract) => contract.number === incident.contract) || initialProfile?.contracts[0]
@@ -505,6 +527,8 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const [replacementDraft, setReplacementDraft] = useState({
     partReplacementRequired: Boolean(incident.partReplacementRequired),
     replacementParts: Array.isArray(incident.replacementParts) ? incident.replacementParts : [],
+    replacementSource: incident.replacementSource || '',
+    taslRequestReason: incident.taslRequestReason || '',
   })
   const repairExecutionOptions = repairExecutions.filter((execution) => execution.active || execution.name === form.repairExecution).map((execution) => execution.name)
   const initialForm = useRef(form)
@@ -515,19 +539,22 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const selectCustomer = (customerName) => {
     const profile = findCustomerProfile(customers, contracts, customerName)
     const primaryContact = profile?.contacts[0]
-    const primaryContract = profile?.contracts[0]
     setSaved(false)
-    setForm((current) => ({ ...current, customer: customerName, requestor: primaryContact?.name || '', contact: contactValue(primaryContact), contract: primaryContract?.number || '', system: primaryContract?.system || '', warranty: primaryContract?.warranty || '', serialNumber: '', category: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
+    setForm((current) => ({ ...current, customer: customerName, requestor: primaryContact?.name || '', contact: contactValue(primaryContact), contract: '', system: '', warranty: '', serialNumber: '', category: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
   }
   const selectRequestor = (requestorName) => {
     const contact = selectedCustomer?.contacts.find((entry) => entry.name === requestorName)
     setSaved(false)
     setForm((current) => ({ ...current, requestor: requestorName, contact: contactValue(contact) }))
   }
+  const selectProductCategory = (category) => {
+    setSaved(false)
+    setForm((current) => ({ ...current, category, serialNumber: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
+  }
   const selectContract = (contractNumber) => {
     const contract = selectedCustomer?.contracts.find((entry) => entry.number === contractNumber)
     setSaved(false)
-    setForm((current) => ({ ...current, contract: contractNumber, system: contract?.system || '', warranty: contract?.warranty || '', serialNumber: '', category: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
+    setForm((current) => ({ ...current, contract: contractNumber, system: contract?.system || '', warranty: contract?.warranty || '', category: '', serialNumber: '', subsystem: '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: '' }))
   }
   const selectRepairExecution = (repairExecution) => {
     const stages = getProcessStages(repairExecution, processes)
@@ -550,7 +577,7 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     setForm((current) => {
       const asset = productAssets.find((entry) => entry.serialNumber === serialNumber && entry.customer === current.customer && entry.contractNumber === current.contract)
         || productAssets.find((entry) => entry.serialNumber === serialNumber)
-      return { ...current, serialNumber, system: current.contract ? current.system : record?.system || '', category: record?.category || '', subsystem: record?.subsystems[0] || '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: asset?.lastServiced || '' }
+      return { ...current, serialNumber, system: current.contract ? current.system : record?.system || '', category: current.category || record?.category || '', subsystem: record?.subsystems[0] || '', component: '', materialSerialNumber: 'Not Applicable', lastServiced: asset?.lastServiced || '' }
     })
   }
   const isRegistered = form.status === 'Registered'
@@ -576,7 +603,10 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const requiresSiteTaslRouting = initialForm.current.status === 'Advisory Group Review' && form.repairExecution === 'Repair at Site - TASL'
   const hasValidSiteTaslRouting = !requiresSiteTaslRouting || Boolean(form.assignmentGroup && form.assignedTo && assignedToOptions.includes(form.assignedTo))
   const canApproveGroupRequest = groupApprovalPending && form.groupApproval?.members?.some((member) => member.name === currentUserName && member.status === 'Pending')
-  const eligibleSerialNumberRecords = serialRecordsForCustomerContract(serialNumberRecords, productAssets, form.customer, form.contract)
+  const replacementSerialsReady = replacementDraft.replacementParts.length > 0
+    && replacementDraft.replacementParts.every((part) => Boolean(part.newSerialNumber.trim()))
+  const productCategoryOptions = productCategoriesForCustomerContract(productAssets, form.customer, form.contract)
+  const eligibleSerialNumberRecords = serialRecordsForCustomerContractCategory(serialNumberRecords, productAssets, form.customer, form.category, form.contract)
   const components = componentOptions(serialNumberRecords, form.serialNumber, form.subsystem)
   const incidentComponents = useMemo(() => serialNumberRecords.find((record) => record.serialNumber === form.serialNumber)?.components
     .filter((component) => component.subsystem === form.subsystem) || [], [form.serialNumber, form.subsystem, serialNumberRecords])
@@ -585,7 +615,25 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const currentSerialForComponent = (component) => form.componentSerialNumbers[componentKey(component)] ?? component.materialSerialNumber ?? 'Not Applicable'
   const togglePartReplacementRequired = (checked) => {
     setSaved(false)
-    setReplacementDraft((current) => ({ ...current, partReplacementRequired: checked, replacementParts: checked ? current.replacementParts : [] }))
+    setReplacementDraft((current) => ({
+      ...current,
+      partReplacementRequired: checked,
+      replacementParts: checked ? current.replacementParts : [],
+      replacementSource: checked ? current.replacementSource : '',
+      taslRequestReason: checked ? current.taslRequestReason : '',
+    }))
+  }
+  const selectReplacementSource = (replacementSource) => {
+    setSaved(false)
+    setReplacementDraft((current) => ({
+      ...current,
+      replacementSource: current.replacementSource === replacementSource ? '' : replacementSource,
+      taslRequestReason: replacementSource === 'tasl' ? current.taslRequestReason : '',
+    }))
+  }
+  const updateTaslRequestReason = (taslRequestReason) => {
+    setSaved(false)
+    setReplacementDraft((current) => ({ ...current, taslRequestReason }))
   }
   const addReplacementPart = () => {
     const firstComponent = incidentComponents[0]
@@ -626,6 +674,8 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
   const canSubmitReplacementApproval = isSiteTaslWorkInProgress
     && replacementDraft.partReplacementRequired
     && !replacementApprovalPending
+    && Boolean(replacementDraft.replacementSource)
+    && (replacementDraft.replacementSource !== 'tasl' || Boolean(replacementDraft.taslRequestReason.trim()))
     && replacementDraft.replacementParts.length > 0
   const submitReplacementApproval = () => {
     if (!canSubmitReplacementApproval) return
@@ -643,12 +693,43 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
       requestedBy: currentUser.name || currentUser.email,
       members: approvalMembers.map((name) => ({ name, status: 'Pending' })),
       parts: replacementDraft.replacementParts.map((part) => ({ ...part })),
+      replacementSource: replacementDraft.replacementSource,
+      taslRequestReason: replacementDraft.taslRequestReason.trim(),
     }
-    void saveChanges({ ...form, groupApproval })
+    const taslRequestNote = replacementDraft.replacementSource === 'tasl'
+      ? `Request from TASL: ${replacementDraft.taslRequestReason.trim()}`
+      : ''
+    const advisoryNotifications = replacementDraft.replacementSource === 'tasl'
+      ? approvalMembers.map((name) => {
+        const recipient = users.find((member) => member.name === name)
+        return recipient ? {
+          id: `tasl-replacement-request-${incident.id}-${Date.now()}-${recipient.id}`,
+          type: 'tasl-replacement-request',
+          title: `TASL part request: ${incident.id}`,
+          incidentId: incident.id,
+          workNotes: taslRequestNote,
+          recipientUserId: recipient.id,
+          recipientName: recipient.name,
+          readByUserIds: [],
+          createdAt: new Date().toISOString(),
+        } : null
+      }).filter(Boolean)
+      : []
+    void saveChanges(
+      { ...form, groupApproval, workNotes: taslRequestNote || form.workNotes },
+      taslRequestNote ? [{
+        id: `tasl-request-${Date.now()}-${Math.random()}`,
+        assignedGroup: advisoryGroup?.name || 'Advisory Group',
+        updatedBy: currentUser.name || currentUser.email,
+        updatedAt: new Date().toISOString(),
+        changes: [{ field: 'Request from TASL', previous: '', next: replacementDraft.taslRequestReason.trim() }],
+      }] : [],
+      advisoryNotifications,
+    )
   }
   const selectSubsystem = (subsystem) => { setSaved(false); setForm((current) => ({ ...current, subsystem, component: '', materialSerialNumber: 'Not Applicable' })) }
   const selectComponent = (component) => setForm((current) => ({ ...current, component, materialSerialNumber: materialSerialNumberFor(serialNumberRecords, current.serialNumber, current.subsystem, component) }))
-  const saveChanges = async (nextForm = form, journalEntries = []) => {
+  const saveChanges = async (nextForm = form, journalEntries = [], additionalNotifications = []) => {
     if (initialForm.current.status === 'Advisory Group Review' && nextForm.repairExecution === 'Repair at Site - TASL' && (!nextForm.assignmentGroup || !nextForm.assignedTo || !groupMemberNames(assignmentGroups, users, nextForm.assignmentGroup).includes(nextForm.assignedTo))) {
       setSaveError('Select an Assignment Group and an active Assigned To user before saving Repair at Site - TASL.')
       return false
@@ -682,9 +763,9 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
       return false
     }
     const values = {
-      title: nextForm.shortDescription, description: nextForm.description, customer: nextForm.customer, contract: nextForm.contract, requestor: nextForm.requestor, contact: nextForm.contact, occurrencePhase: nextForm.occurrencePhase, priority: nextForm.priority, group: nextForm.assignmentGroup, assignmentGroup: nextForm.assignmentGroup, assignedTo: nextForm.assignedTo, attachments: nextForm.attachments, repairExecution: nextForm.repairExecution, status: nextForm.status, stage: nextForm.status, serialNumber: nextForm.serialNumber, system: nextForm.system, category: nextForm.category, subsystem: nextForm.subsystem, component: nextForm.component, materialSerialNumber: nextForm.materialSerialNumber, componentSerialNumbers: nextForm.componentSerialNumbers, warranty: nextForm.warranty, lastServiced: nextForm.lastServiced, workNotes: nextForm.workNotes, repairCompleted: nextForm.repairCompleted, resolutionDetails: nextForm.resolutionDetails, groupApproval: nextForm.groupApproval, partReplacementRequired: replacementDraft.partReplacementRequired, replacementParts: replacementDraft.replacementParts,
+      title: nextForm.shortDescription, description: nextForm.description, customer: nextForm.customer, contract: nextForm.contract, requestor: nextForm.requestor, contact: nextForm.contact, occurrencePhase: nextForm.occurrencePhase, priority: nextForm.priority, group: nextForm.assignmentGroup, assignmentGroup: nextForm.assignmentGroup, assignedTo: nextForm.assignedTo, attachments: nextForm.attachments, repairExecution: nextForm.repairExecution, status: nextForm.status, stage: nextForm.status, serialNumber: nextForm.serialNumber, system: nextForm.system, category: nextForm.category, subsystem: nextForm.subsystem, component: nextForm.component, materialSerialNumber: nextForm.materialSerialNumber, componentSerialNumbers: nextForm.componentSerialNumbers, warranty: nextForm.warranty, lastServiced: nextForm.lastServiced, workNotes: nextForm.workNotes, repairCompleted: nextForm.repairCompleted, resolutionDetails: nextForm.resolutionDetails, groupApproval: nextForm.groupApproval, partReplacementRequired: replacementDraft.partReplacementRequired, replacementParts: replacementDraft.replacementParts, replacementSource: replacementDraft.replacementSource, taslRequestReason: replacementDraft.taslRequestReason.trim(),
     }
-    const labels = { title: 'Short description', description: 'Description', customer: 'Customer', contract: 'Customer contract', requestor: 'Requestor', contact: 'Requestor contact', occurrencePhase: 'Occurrence phase', priority: 'Priority', assignmentGroup: 'Assigned group', assignedTo: 'Assigned to', repairExecution: 'Repair execution', status: 'Status', serialNumber: 'Product serial number', system: 'System type', category: 'Product category', subsystem: 'Sub-system', component: 'Component', materialSerialNumber: 'Material serial number', warranty: 'Warranty status', lastServiced: 'Last serviced on', workNotes: 'Work notes', repairCompleted: 'Repair completed', resolutionDetails: 'Resolution notes', groupApproval: 'Group approval', attachments: 'Attachments' }
+    const labels = { title: 'Short description', description: 'Description', customer: 'Customer', contract: 'Customer contract', requestor: 'Requestor', contact: 'Requestor contact', occurrencePhase: 'Occurrence phase', priority: 'Priority', assignmentGroup: 'Assigned group', assignedTo: 'Assigned to', repairExecution: 'Repair execution', status: 'Status', serialNumber: 'Product serial number', system: 'System type', category: 'Product category', subsystem: 'Sub-system', component: 'Component', materialSerialNumber: 'Material serial number', warranty: 'Warranty status', lastServiced: 'Last serviced on', workNotes: 'Work notes', repairCompleted: 'Repair completed', resolutionDetails: 'Resolution notes', groupApproval: 'Group approval', attachments: 'Attachments', replacementSource: 'Replacement source', taslRequestReason: 'Request from TASL reason', childIncidentIds: 'Child incidents' }
     const previousValues = { ...initialForm.current, title: initialForm.current.shortDescription, group: initialForm.current.assignmentGroup, assignmentGroup: initialForm.current.assignmentGroup }
     const changes = Object.entries(values)
       .filter(([key]) => !['group', 'stage', 'componentSerialNumbers'].includes(key))
@@ -716,15 +797,80 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     replacementProductUpdates.forEach((update) => {
       values.componentSerialNumbers = { ...values.componentSerialNumbers, [update.componentKey]: update.next }
     })
+    const isMovingToPostRepairAcceptance = nextForm.status === 'Post Repair Acceptance' && form.status !== 'Post Repair Acceptance'
+    const existingChildIncidentIds = incident.childIncidentIds || []
+    const hasFactoryChild = existingChildIncidentIds.length > 0 || allIncidents.some((entry) => entry.parentIncidentId === incident.id)
+    let childIncident
+    if (isMovingToPostRepairAcceptance && replacementDraft.replacementSource === 'mrls' && replacementApprovalApproved && replacementSerialsReady && !hasFactoryChild) {
+      const factoryStages = getProcessStages('Repair at Factory - In-house', processes)
+      const configuredFactoryStages = factoryStages.length ? factoryStages : getProcessStages('Repair at Factory', processes)
+      const factoryStage = configuredFactoryStages[0]
+      if (!factoryStage) {
+        setSaveError('Configure a first Repair at Factory stage before submitting an MRLS replacement to Post Repair Acceptance.')
+        return false
+      }
+      const childContract = contracts.find((contract) => contract.number === nextForm.contract)
+      const childId = nextIncidentId([...allIncidents, incident], childContract, nextForm.customer)
+      const childAssignmentGroup = factoryStage.assignmentGroup || 'Store Management'
+      const createdAt = new Date().toISOString()
+      childIncident = {
+        id: childId,
+        opened: createdAt,
+        title: `Factory repair for ${nextForm.serialNumber || incident.id}`,
+        description: `Factory follow-up created from ${incident.id} after MRLS replacement approval.`,
+        priority: nextForm.priority,
+        state: 'In progress',
+        stage: factoryStage.status,
+        status: factoryStage.status,
+        repairExecution: 'Repair at Factory - In-house',
+        group: childAssignmentGroup,
+        assignmentGroup: childAssignmentGroup,
+        assignedTo: '',
+        customer: nextForm.customer,
+        contract: nextForm.contract,
+        requestor: nextForm.requestor,
+        contact: nextForm.contact,
+        occurrencePhase: nextForm.occurrencePhase,
+        serialNumber: nextForm.serialNumber,
+        system: nextForm.system,
+        category: nextForm.category,
+        subsystem: nextForm.subsystem,
+        component: nextForm.component,
+        materialSerialNumber: nextForm.materialSerialNumber,
+        componentSerialNumbers: nextForm.componentSerialNumbers,
+        warranty: nextForm.warranty,
+        lastServiced: nextForm.lastServiced,
+        attachments: nextForm.attachments,
+        parentIncidentId: incident.id,
+        replacementSource: 'mrls',
+        replacementParts: replacementDraft.replacementParts,
+        auditLog: [{
+          id: `factory-child-${Date.now()}-${Math.random()}`,
+          assignedGroup: childAssignmentGroup,
+          updatedBy: currentUser.name || currentUser.email,
+          updatedAt: createdAt,
+          changes: [{ field: 'Parent incident', previous: '', next: incident.id }, { field: 'Creation source', previous: '', next: 'Approved MRLS replacement' }],
+        }],
+      }
+      values.childIncidentIds = [...existingChildIncidentIds, childId]
+    }
     const auditLog = [...(incident.auditLog || [])]
     if (changes.length) auditLog.push({ id: `${Date.now()}-${Math.random()}`, assignedGroup: nextForm.assignmentGroup, updatedBy: currentUser.name || currentUser.email, updatedAt: new Date().toISOString(), changes })
+    if (childIncident) auditLog.push({
+      id: `factory-child-link-${Date.now()}-${Math.random()}`,
+      assignedGroup: nextForm.assignmentGroup,
+      updatedBy: currentUser.name || currentUser.email,
+      updatedAt: new Date().toISOString(),
+      changes: [{ field: 'Factory child incident', previous: '', next: childIncident.id }],
+    })
     auditLog.push(...journalEntries)
     setSaveError('')
     try {
       const mentionNotifications = workNoteMentionRecipients(nextForm.workNotes, users, assignmentGroups)
         .filter((recipient) => recipient.id !== currentUserRecord?.id)
         .map((recipient) => ({ id: `incident-mention-${incident.id}-${Date.now()}-${recipient.id}`, type: 'work-note-mention', title: `${currentUser.name || currentUser.email} mentioned you`, incidentId: incident.id, workNotes: nextForm.workNotes, recipientUserId: recipient.id, recipientName: recipient.name, readByUserIds: [], createdAt: new Date().toISOString() }))
-      await onSave({ ...values, componentProductUpdates, mentionNotifications, auditLog })
+      const notifications = [...mentionNotifications, ...additionalNotifications.filter((notification) => !mentionNotifications.some((mention) => mention.recipientUserId === notification.recipientUserId))]
+      await onSave({ ...values, childIncident, componentProductUpdates, mentionNotifications: notifications, auditLog })
       initialForm.current = { ...nextForm, workNotes: '' }
       setForm((current) => ({ ...current, workNotes: '' }))
       setSaved(true)
@@ -819,7 +965,11 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
     && Boolean(form.assignmentGroup)
     && isCurrentGroupMember
     && Boolean(nextStage)
+  const movesToPostRepairAcceptance = nextStage?.status === 'Post Repair Acceptance'
+  const replacementApprovalReady = replacementDraft.replacementSource !== 'mrls'
+    || (replacementApprovalApproved && replacementSerialsReady)
   const canAdvanceToNextStage = canMoveToNextStage && (!isRepairWorkInProgress || hasCompletedRepair) && !groupApprovalPending
+    && (!movesToPostRepairAcceptance || replacementApprovalReady)
   const nextStageActionLabel = nextStage ? `Move to ${nextStage.status}` : ''
   const hasUnsavedChanges = JSON.stringify(form) !== JSON.stringify(initialForm.current)
   const canSave = (isRepairWorkInProgress || hasUnsavedChanges) && hasValidSiteTaslRouting
@@ -830,12 +980,12 @@ function IncidentDetailForm({ assignmentGroups, customers, contracts, repairExec
       <WorkflowProgress stages={stages} currentStatus={form.status} />
       <div className="incident-detail-content">
         <section className="incident-detail-section"><header className="incident-section-header"><h2>Incident details</h2><button type="button" className="process-steps-link" onClick={() => setProcessStepsOpen(true)}><ListChecks size={14} /> Process steps</button></header><div className="incident-form-grid"><Field label="Incident number"><div className="incident-auto-field">{incident.id}</div></Field><Field label="Created on"><div className="incident-auto-field">{openedDateLabel(incident.opened)}</div></Field><Field label="Repair execution"><SelectField value={form.repairExecution} onChange={selectRepairExecution} options={repairExecutionOptions} placeholder="Select repair execution" disabled={(isRegistered || repairExecutionDetailsReadOnly) && !isAdvisoryReview} /></Field><Field label="Status"><SelectField value={form.status} onChange={(value) => update('status', value)} options={stages.map((stage) => stage.status)} placeholder="Select status" disabled={isRegistered || repairExecutionDetailsReadOnly} /></Field></div></section>
-        <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Customer</h2><div className="incident-form-grid"><Field label="Customer name"><SelectField value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Customer contract"><SelectField value={form.contract} onChange={selectContract} options={selectedCustomer?.contracts.map((contract) => contract.number) || []} placeholder="Select customer first" /></Field><Field label="Requestor name"><RequestorSelect customer={selectedCustomer} value={form.requestor} onChange={selectRequestor} /></Field><Field label="Requestor contact"><input value={form.contact} readOnly placeholder="Auto-filled from requestor" /></Field></div></section></fieldset>
+        <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Customer</h2><div className="incident-form-grid"><Field label="Customer name"><SelectField value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Customer contract"><SelectField value={form.contract} onChange={selectContract} options={selectedCustomer?.contracts.map((contract) => contract.number) || []} placeholder={form.customer ? 'Select customer contract' : 'Select customer first'} disabled={!form.customer || repairExecutionDetailsReadOnly} /></Field><Field label="Requestor name"><RequestorSelect customer={selectedCustomer} value={form.requestor} onChange={selectRequestor} /></Field><Field label="Requestor contact"><input value={form.contact} readOnly placeholder="Auto-filled from requestor" /></Field></div></section></fieldset>
         <section className="incident-detail-section"><h2>Incident classification</h2><div className="incident-form-grid"><Field label="Occurrence phase"><SelectField value={form.occurrencePhase} onChange={(value) => setForm((current) => ({ ...current, occurrencePhase: value, priority: value === 'In Flight' ? 'High' : current.priority }))} options={['In Flight', 'Ground Operations']} placeholder="Select occurrence phase" disabled={repairExecutionDetailsReadOnly} /></Field>{field('Priority', 'priority', 'Select priority', ['Critical', 'High', 'Medium', 'Low'])}<Field label="Assignment group" required={!currentStageAssignmentIsConfigured || requiresSiteTaslRouting}><SelectField value={form.assignmentGroup} onChange={selectAssignmentGroup} options={assignmentGroupOptions} placeholder="Select assignment group" /></Field><Field label="Assigned to" required={requiresSiteTaslRouting}><SelectField value={form.assignedTo} onChange={(value) => update('assignedTo', value)} options={assignedToOptions} placeholder={form.assignmentGroup ? 'Select group member' : 'Select assignment group first'} /><button type="button" className="compact-button secondary" disabled={!canAssignToMe || form.assignedTo === currentUserName} onClick={() => update('assignedTo', currentUserName)}>Assign to me</button></Field></div></section>
-        <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Product details</h2><div className="incident-form-grid"><SerialNumberReference records={eligibleSerialNumberRecords} value={form.serialNumber} onChange={selectSerialNumber} disabled={repairExecutionDetailsReadOnly || !form.customer || !form.contract} placeholder={form.contract ? 'Search serial number assigned to this contract' : 'Select customer and contract first'} hint={form.contract ? `${eligibleSerialNumberRecords.length} serial number${eligibleSerialNumberRecords.length === 1 ? '' : 's'} assigned to this customer contract` : 'Select customer and contract to view eligible serial numbers'} /><LookupField label="Product category" value={form.category} /><LookupField label="System type" value={form.system} /><SubsystemReference serialNumber={form.serialNumber} value={form.subsystem} records={serialNumberRecords} onChange={selectSubsystem} /><Field label="Component"><SelectField value={form.component} onChange={selectComponent} options={components} placeholder={form.subsystem ? 'Select material description' : 'Select sub-system first'} /></Field><Field label="Material serial number"><input value={form.materialSerialNumber} onChange={(event) => update('materialSerialNumber', event.target.value)} placeholder="Not Applicable" /></Field></div></section></fieldset>
+          <fieldset disabled={repairExecutionDetailsReadOnly}><section className="incident-detail-section"><h2>Product details</h2><div className="incident-form-grid"><Field label="Product category"><SelectField value={form.category} onChange={selectProductCategory} options={productCategoryOptions} placeholder={form.contract ? 'Select product category' : 'Select customer contract first'} disabled={!form.contract || repairExecutionDetailsReadOnly} /></Field><SerialNumberReference records={eligibleSerialNumberRecords} value={form.serialNumber} onChange={selectSerialNumber} disabled={repairExecutionDetailsReadOnly || !form.customer || !form.category || !form.contract} placeholder={form.category ? 'Search serial number assigned to this contract and product category' : 'Select product category first'} hint={form.category ? `${eligibleSerialNumberRecords.length} serial number${eligibleSerialNumberRecords.length === 1 ? '' : 's'} assigned to this customer contract and product category` : 'Select product category to view eligible serial numbers'} /><LookupField label="System type" value={form.system} /><SubsystemReference serialNumber={form.serialNumber} value={form.subsystem} records={serialNumberRecords} onChange={selectSubsystem} /><Field label="Component"><SelectField value={form.component} onChange={selectComponent} options={components} placeholder={form.subsystem ? 'Select material description' : 'Select sub-system first'} /></Field><Field label="Material serial number"><input value={form.materialSerialNumber} onChange={(event) => update('materialSerialNumber', event.target.value)} placeholder="Not Applicable" /></Field></div></section></fieldset>
         <section className="incident-detail-section"><h2>Service history</h2><div className="incident-form-grid">{field('Warranty status', 'warranty', 'Active/Expired/Expiring Soon')}{field('Last serviced on', 'lastServiced', 'YYYY-MM-DD')}</div></section>
         <section className="incident-detail-section"><h2>Issue description</h2><fieldset disabled={repairExecutionDetailsReadOnly}><div className="incident-form-grid">{field('Short description', 'shortDescription', 'Short description')}<Field label="Description"><textarea value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="Description" rows="4" /></Field></div></fieldset><AttachmentSection attachments={form.attachments} onChange={(attachments) => update('attachments', attachments)} /></section>
-        <section className="incident-work-area"><div className="incident-work-tabs">{['Notes', 'Components', 'Resolution'].map((tab) => <button type="button" key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div>{activeTab === 'Notes' && <div className="incident-work-panel"><WorkNotesField value={form.workNotes} onChange={(value) => update('workNotes', value)} users={users} groups={assignmentGroups} inputRef={workNotesInput} />{isPreDispatchApproval && form.groupApproval && <section className="group-approval-panel"><h3>{form.groupApproval.assignmentGroup} approval</h3><p>{form.groupApproval.status === 'Approved' ? `Approved by ${form.groupApproval.approvedBy}.` : `Pending approval from ${form.groupApproval.assignmentGroup} (${form.groupApproval.members.filter((member) => member.status === 'Pending').length} member${form.groupApproval.members.filter((member) => member.status === 'Pending').length === 1 ? '' : 's'}).`}</p>{canApproveGroupRequest && <button type="button" className="incident-next-stage-button" onClick={() => setApprovalDecisionOpen(true)}>Approve group request</button>}</section>}<details><summary>Record journal</summary>{(incident.auditLog || []).length ? <ol className="incident-journal">{[...incident.auditLog].reverse().map((entry) => <li key={entry.id}><article><header><div><strong>{entry.updatedBy || 'System'}</strong><span>Updated record</span></div><time>{openedDateLabel(entry.updatedAt)}</time></header><dl><div><dt>Assigned group</dt><dd>{entry.assignedGroup || '--'}</dd></div>{entry.changes.map((change, index) => <div key={`${change.field}-${index}`}><dt>{change.field}</dt><dd><s>{String(change.previous || '--')}</s><i>to</i><b>{String(change.next || '--')}</b></dd></div>)}</dl></article></li>)}</ol> : <p>No journal entries have been recorded.</p>}</details></div>}{activeTab === 'Components' && <IncidentComponentsTable components={incidentComponents} componentSerialNumbers={form.componentSerialNumbers} onChange={updateComponentSerialNumber} serialNumber={form.serialNumber} subsystem={form.subsystem} readOnly={repairExecutionDetailsReadOnly} />}{activeTab === 'Resolution' && <div className="incident-work-panel resolution-work-panel">{isRepairWorkInProgress && <section className={`resolution-completion-card ${form.repairCompleted ? 'is-complete' : ''}`}><header><div><span className="resolution-card-icon"><Wrench size={15} /></span><div><h3>Repair completion</h3><p>Confirm that corrective work and functional verification are complete.</p></div></div><span className="resolution-state">{form.repairCompleted ? 'Complete' : 'Required'}</span></header><label className="repair-completed-check"><input type="checkbox" checked={form.repairCompleted} onChange={(event) => update('repairCompleted', event.target.checked)} /><span><strong>Repair completed</strong><small>All repair actions and checks have been completed.</small></span></label></section>}{isSiteTaslWorkInProgress && <ReplacementPartsPanel enabled={replacementDraft.partReplacementRequired} onToggle={togglePartReplacementRequired} parts={replacementDraft.replacementParts} components={incidentComponents} approval={replacementApproval} onAdd={addReplacementPart} onRemove={removeReplacementPart} onChange={updateReplacementPart} onSubmit={submitReplacementApproval} canSubmit={canSubmitReplacementApproval} /> }<section className="resolution-notes-panel"><header><div><h3>Resolution &amp; verification</h3><p>Record the work performed, test results, and service outcome.</p></div>{isRepairWorkInProgress && <span className={`resolution-state ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Ready to progress' : 'Action needed'}</span>}</header><Field label="Resolution notes" required={isRepairWorkInProgress && form.repairCompleted}><textarea disabled={repairExecutionDetailsReadOnly && !isRepairWorkInProgress} value={form.resolutionDetails} onChange={(event) => update('resolutionDetails', event.target.value)} placeholder="Document the resolution and verification details..." rows="4" /></Field>{isRepairWorkInProgress && <p className={`resolution-readiness ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Completion requirements met. Record work notes, then move this incident to the next stage.' : 'Select Repair completed and provide resolution notes before moving to the next stage.'}</p>}</section></div>}</section>
+        <section className="incident-work-area"><div className="incident-work-tabs">{['Notes', 'Components', 'Resolution'].map((tab) => <button type="button" key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div>{activeTab === 'Notes' && <div className="incident-work-panel"><WorkNotesField value={form.workNotes} onChange={(value) => update('workNotes', value)} users={users} groups={assignmentGroups} inputRef={workNotesInput} />{isPreDispatchApproval && form.groupApproval && <section className="group-approval-panel"><h3>{form.groupApproval.assignmentGroup} approval</h3><p>{form.groupApproval.status === 'Approved' ? `Approved by ${form.groupApproval.approvedBy}.` : `Pending approval from ${form.groupApproval.assignmentGroup} (${form.groupApproval.members.filter((member) => member.status === 'Pending').length} member${form.groupApproval.members.filter((member) => member.status === 'Pending').length === 1 ? '' : 's'}).`}</p>{canApproveGroupRequest && <button type="button" className="incident-next-stage-button" onClick={() => setApprovalDecisionOpen(true)}>Approve group request</button>}</section>}<details><summary>Record journal</summary>{(incident.auditLog || []).length ? <ol className="incident-journal">{[...incident.auditLog].reverse().map((entry) => <li key={entry.id}><article><header><div><strong>{entry.updatedBy || 'System'}</strong><span>Updated record</span></div><time>{openedDateLabel(entry.updatedAt)}</time></header><dl><div><dt>Assigned group</dt><dd>{entry.assignedGroup || '--'}</dd></div>{entry.changes.map((change, index) => <div key={`${change.field}-${index}`}><dt>{change.field}</dt><dd><s>{String(change.previous || '--')}</s><i>to</i><b>{String(change.next || '--')}</b></dd></div>)}</dl></article></li>)}</ol> : <p>No journal entries have been recorded.</p>}</details></div>}{activeTab === 'Components' && <IncidentComponentsTable components={incidentComponents} componentSerialNumbers={form.componentSerialNumbers} onChange={updateComponentSerialNumber} serialNumber={form.serialNumber} subsystem={form.subsystem} readOnly={repairExecutionDetailsReadOnly} />}{activeTab === 'Resolution' && <div className="incident-work-panel resolution-work-panel">{isRepairWorkInProgress && <section className={`resolution-completion-card ${form.repairCompleted ? 'is-complete' : ''}`}><header><div><span className="resolution-card-icon"><Wrench size={15} /></span><div><h3>Repair completion</h3><p>Confirm that corrective work and functional verification are complete.</p></div></div><span className="resolution-state">{form.repairCompleted ? 'Complete' : 'Required'}</span></header><label className="repair-completed-check"><input type="checkbox" checked={form.repairCompleted} onChange={(event) => update('repairCompleted', event.target.checked)} /><span><strong>Repair completed</strong><small>All repair actions and checks have been completed.</small></span></label></section>}{isSiteTaslWorkInProgress && <ReplacementPartsPanel enabled={replacementDraft.partReplacementRequired} onToggle={togglePartReplacementRequired} replacementSource={replacementDraft.replacementSource} taslRequestReason={replacementDraft.taslRequestReason} onSourceChange={selectReplacementSource} onTaslRequestReasonChange={updateTaslRequestReason} parts={replacementDraft.replacementParts} components={incidentComponents} approval={replacementApproval} onAdd={addReplacementPart} onRemove={removeReplacementPart} onChange={updateReplacementPart} onSubmit={submitReplacementApproval} canSubmit={canSubmitReplacementApproval} /> }<section className="resolution-notes-panel"><header><div><h3>Resolution &amp; verification</h3><p>Record the work performed, test results, and service outcome.</p></div>{isRepairWorkInProgress && <span className={`resolution-state ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Ready to progress' : 'Action needed'}</span>}</header><Field label="Resolution notes" required={isRepairWorkInProgress && form.repairCompleted}><textarea disabled={repairExecutionDetailsReadOnly && !isRepairWorkInProgress} value={form.resolutionDetails} onChange={(event) => update('resolutionDetails', event.target.value)} placeholder="Document the resolution and verification details..." rows="4" /></Field>{isRepairWorkInProgress && <p className={`resolution-readiness ${hasCompletedRepair ? 'is-complete' : ''}`}>{hasCompletedRepair ? 'Completion requirements met. Record work notes, then move this incident to the next stage.' : 'Select Repair completed and provide resolution notes before moving to the next stage.'}</p>}</section></div>}</section>
       </div>
     </section>
     <footer className="incident-form-footer">{saved && <span className="incident-saved-message">Changes saved</span>}{saveError && <span className="incident-submit-error">{saveError}</span>}<button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button>{canMoveToNextStage && <button type="button" className="incident-next-stage-button" disabled={!canAdvanceToNextStage} title={isRepairWorkInProgress && !hasCompletedRepair ? 'Complete Repair Completed and Resolution Notes before progressing.' : undefined} onClick={openStageTransition}>{nextStageActionLabel}</button>}<button type="submit" className="incident-submit-button" disabled={!canSave}>Save</button></footer>

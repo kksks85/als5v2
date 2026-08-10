@@ -16,12 +16,12 @@ export const initialProcesses = [
   ['Repair at Site - TASL', 'Resource Assignment', 2],
   ['Repair at Site - TASL', 'Diagnosis', 3],
   ['Repair at Site - TASL', 'Work in Progress', 4],
-  ['Repair at Site - TASL', 'Post repair Quality Review', 5],
+  ['Repair at Site - TASL', 'Post Repair Acceptance', 5],
   ['Repair at Site - TASL', 'Closed', 6],
   ['Repair at Site - Vendor', 'Query Registered', 1],
   ['Repair at Site - Vendor', 'Assigned Vendor', 2],
   ['Repair at Site - Vendor', 'Work in Progress - Vendor', 3],
-  ['Repair at Site - Vendor', 'Post repair Review', 4],
+  ['Repair at Site - Vendor', 'Post Repair Acceptance', 4],
   ['Repair at Site - Vendor', 'Closed', 5],
   ['Pre Delivery Flight', 'Pre-flight Inspection', 1],
   ['Pre Delivery Flight', 'Flight Preparation', 2],
@@ -37,6 +37,18 @@ const processConfigurationClearMigrationKey = 'als50-process-configuration-clear
 export const defaultStageInstruction = (status) => status
   ? `Complete the required checks, record the supporting evidence, and confirm the handover requirements for ${status}.`
   : 'Describe the checks, actions, and evidence required before this stage is complete.'
+
+const siteAcceptanceStageNames = new Map([
+  ['Repair at Site - TASL', new Set(['Post repair Quality Review', 'Post repair QC'])],
+  ['Repair at Site - Vendor', new Set(['Post repair Review', 'Post repair Quality Review', 'Post repair QC'])],
+])
+
+export const normalizeSiteRepairAcceptanceStages = (processes) => processes.map((process) => {
+  const legacyNames = siteAcceptanceStageNames.get(process.repairExecution)
+  return legacyNames?.has(process.status)
+    ? { ...process, status: 'Post Repair Acceptance' }
+    : process
+})
 
 const addIncidentRegistrationStage = (processes) => {
   if (localStorage.getItem(processConfigurationMigrationKey)) return processes
