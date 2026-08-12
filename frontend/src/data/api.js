@@ -29,6 +29,12 @@ export const recordApi = {
 }
 
 export const authenticationApi = {
+  restoreSession: (session) => {
+    accessToken = session?.access_token || ''
+  },
+  clearSession: () => {
+    accessToken = ''
+  },
   demoLogin: async (user) => {
     const session = await request('/authentication/demo-login', {
       method: 'POST',

@@ -1,11 +1,12 @@
 import os
+import re
 import smtplib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,10 @@ from app.database import get_db
 from app.models import AssignmentGroupRecord, EmailLogRecord, IncidentRecord, NotificationRecord, OutboundEmailRuleRecord, SubcontractRecord, UserRecord
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+
+def prune_expired_email_logs(database: Session) -> None:
+    database.execute(delete(EmailLogRecord).where(EmailLogRecord.created_at < datetime.now(UTC) - timedelta(days=10)))
 
 
 class Recipient(BaseModel):
@@ -41,6 +46,12 @@ class IncidentRegistrationEmail(BaseModel):
     subject: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=20000)
     recipients: list[Recipient] = Field(min_length=1, max_length=200)
+    event: str = Field(default="Incident registration notification", min_length=1, max_length=240)
+    delivery_key: str = Field(default="registration", alias="deliveryKey", min_length=1, max_length=240)
+
+
+class IncidentEmailResend(BaseModel):
+    incident_id: str = Field(alias="incidentId", min_length=1, max_length=160)
 
 
 class SmtpTestEmail(BaseModel):
@@ -58,6 +69,18 @@ def environment_flag(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes"}
 
 
+def incident_detail_url(incident_id: str) -> str:
+    application_url = os.getenv("APP_PUBLIC_URL", "http://localhost:5173").strip().rstrip("/")
+    return f"{application_url}/?incidentId={incident_id}"
+
+
+def link_incident_references(content: str, incident_id: str) -> str:
+    if not re.search(rf'<a\b[^>]*>\s*{re.escape(incident_id)}\s*</a>', content, re.IGNORECASE):
+        link = f'<a href="{incident_detail_url(incident_id)}" style="color:#1a5fa8;text-decoration:underline;">{incident_id}</a>'
+        return content.replace(incident_id, link)
+    return content
+
+
 def send_email(recipients: list[Recipient], subject: str, content: str) -> dict[str, int | bool]:
     host = os.getenv("SMTP_HOST", "").strip()
     sender = os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USERNAME", "")).strip()
@@ -73,7 +96,15 @@ def send_email(recipients: list[Recipient], subject: str, content: str) -> dict[
     message["From"] = os.getenv("SMTP_FROM_NAME", "Aerofix Service") + f" <{sender}>"
     message["To"] = ", ".join(f"{recipient.name} <{recipient.email}>" for recipient in recipients)
     message["Subject"] = subject
-    message.set_content(content)
+    if re.search(r"<[^>]+>", content):
+        plain_content = re.sub(r"\s*<br\s*/?>\s*", "\n", content, flags=re.IGNORECASE)
+        plain_content = re.sub(r"</(?:p|tr|h[1-6])>", "\n", plain_content, flags=re.IGNORECASE)
+        plain_content = re.sub(r"</(?:td|th)>", "\t", plain_content, flags=re.IGNORECASE)
+        plain_content = re.sub(r"<[^>]+>", "", plain_content)
+        message.set_content(re.sub(r"\n{3,}", "\n\n", plain_content).strip())
+        message.add_alternative(content, subtype="html")
+    else:
+        message.set_content(content)
 
     with (smtplib.SMTP_SSL(host, port, timeout=15) if use_ssl else smtplib.SMTP(host, port, timeout=15)) as client:
         if use_tls:
@@ -200,17 +231,19 @@ def send_incident_registration_email(
     notification: IncidentRegistrationEmail,
     database: Session = Depends(get_db),
 ) -> dict[str, int | bool]:
+    prune_expired_email_logs(database)
     created_at = datetime.now(UTC).isoformat()
+    content = link_incident_references(notification.content, notification.incident_id)
     unique_recipients = {recipient.email.lower(): recipient for recipient in current_notification_recipients(notification, database)}
     results = []
     for recipient in unique_recipients.values():
-        record_id = f"incident-email-{notification.incident_id}-{notification.rule_id}-{recipient.email.lower()}"
+        record_id = f"incident-email-{notification.incident_id}-{notification.rule_id}-{notification.delivery_key}-{recipient.email.lower()}"
         existing = database.scalar(select(EmailLogRecord).where(EmailLogRecord.record_id == record_id))
         if existing and existing.payload.get("status") == "Sent":
             results.append(existing.payload)
             continue
         try:
-            delivery = send_email([recipient], notification.subject, notification.content)
+            delivery = send_email([recipient], notification.subject, content)
             if delivery["configured"] and delivery["sent"]:
                 status = "Sent"
                 details = f"{notification.incident_id}: {notification.rule_name} delivered through the configured SMTP connector."
@@ -223,9 +256,11 @@ def send_incident_registration_email(
         payload = {
             "id": record_id,
             "direction": "Outbound",
-            "event": "Incident registration notification",
+            "event": notification.event,
             "status": status,
             "recipient": recipient.email.lower(),
+            "subject": notification.subject,
+            "content": content,
             "details": details,
             "occurredAt": created_at,
         }
@@ -243,6 +278,44 @@ def send_incident_registration_email(
         "failed": sum(result["status"] == "Failed" for result in results),
         "not_sent": sum(result["status"] == "Not sent" for result in results),
     }
+
+
+@router.post("/incident-registration-email/resend")
+def resend_incident_registration_email(
+    request: IncidentEmailResend,
+    database: Session = Depends(get_db),
+) -> dict[str, int | bool]:
+    matching_logs = [
+        record.payload for record in database.scalars(select(EmailLogRecord)).all()
+        if record.payload.get("event") == "Incident registration notification"
+        and str(record.payload.get("details", "")).startswith(f"{request.incident_id}:")
+        and record.payload.get("recipient")
+    ]
+    if not matching_logs:
+        raise HTTPException(status_code=404, detail="No original incident notification was found to resend.")
+
+    source = max(matching_logs, key=lambda payload: payload.get("occurredAt", ""))
+    content = link_incident_references(str(source.get("content", "")), request.incident_id)
+    if not content:
+        raise HTTPException(status_code=409, detail="The original notification did not retain its email content.")
+
+    recipients = {str(payload["recipient"]).lower(): Recipient(email=payload["recipient"], name=payload["recipient"]) for payload in matching_logs}
+    occurred_at = datetime.now(UTC).isoformat()
+    results = []
+    for recipient in recipients.values():
+        try:
+            delivery = send_email([recipient], str(source.get("subject", f"Incident {request.incident_id}")), content)
+            status = "Sent" if delivery["configured"] and delivery["sent"] else "Not sent"
+            details = f"{request.incident_id}: Incident notification resent through the configured SMTP connector."
+        except (OSError, smtplib.SMTPException) as error:
+            status = "Failed"
+            details = f"{request.incident_id}: Incident notification resend failed: {error}"
+        record_id = f"incident-email-resend-{request.incident_id}-{int(datetime.now(UTC).timestamp() * 1000000)}-{recipient.email.lower()}"
+        payload = {"id": record_id, "direction": "Outbound", "event": "Incident registration notification resend", "status": status, "recipient": recipient.email.lower(), "subject": source.get("subject", ""), "content": content, "details": details, "occurredAt": occurred_at}
+        database.add(EmailLogRecord(record_id=record_id, payload=payload))
+        results.append(payload)
+    database.commit()
+    return {"configured": bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USERNAME", "")).strip()), "sent": sum(result["status"] == "Sent" for result in results), "failed": sum(result["status"] == "Failed" for result in results), "not_sent": sum(result["status"] == "Not sent" for result in results)}
 
 
 @router.post("/subcontract-coverage-usage")

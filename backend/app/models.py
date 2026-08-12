@@ -82,6 +82,10 @@ class EmailSettingsRecord(RecordMixin, Base):
     __tablename__ = "email_settings"
 
 
+class EmailTemplateRecord(RecordMixin, Base):
+    __tablename__ = "email_templates"
+
+
 class EmailLogRecord(RecordMixin, Base):
     __tablename__ = "email_logs"
 

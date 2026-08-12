@@ -35,6 +35,41 @@ const resolveIndexes = (headerRow, aliases) => Object.fromEntries(Object.entries
 
 const sheetRows = (sheet) => XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
 
+export const parseProductMasterWorkbook = (arrayBuffer, columns, idPrefix, fileName = 'Product Master workbook') => {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+  const rows = []
+  const invalidRows = []
+  const skippedSheets = []
+  const requiredColumns = columns.filter((column) => column.required)
+
+  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
+    const values = sheetRows(workbook.Sheets[sheetName])
+    const headerIndex = findHeaderRow(values, requiredColumns.map((column) => [normalizeHeader(column.label)]))
+    if (headerIndex === -1) {
+      skippedSheets.push({ sheetName, reason: `Required headers were not found: ${requiredColumns.map((column) => column.label).join(', ')}.` })
+      return
+    }
+
+    const indexes = Object.fromEntries(columns.map((column) => [column.key, values[headerIndex].findIndex((header) => normalizeHeader(header) === normalizeHeader(column.label))]))
+    values.slice(headerIndex + 1).forEach((row, offset) => {
+      const payload = Object.fromEntries(columns.map((column) => [column.key, sourceCell(row, indexes[column.key])]))
+      if (!Object.values(payload).some(Boolean)) return
+      const missingFields = requiredColumns.filter((column) => !payload[column.key]).map((column) => column.label)
+      const rowNumber = headerIndex + offset + 2
+      const materialIdentity = payload.material_serial_number || payload.item_serial_number || payload.material_description
+      const recordId = [idPrefix, 'import', payload.product_serial_number, payload.part_number, materialIdentity]
+        .map((value) => normalizePartNumber(value))
+        .filter(Boolean)
+        .join('-') || `${idPrefix}-import-${sheetIndex + 1}-${rowNumber}`
+      const importedRow = { id: recordId, ...payload, importSource: { fileName, sheetName, rowNumber } }
+      if (missingFields.length) invalidRows.push({ ...importedRow, missingFields })
+      else rows.push(importedRow)
+    })
+  })
+
+  return { fileName, sheetNames: workbook.SheetNames, rows, invalidRows, skippedSheets }
+}
+
 export const parseRouteCardWorkbook = (arrayBuffer, fileName = 'Route Card workbook') => {
   const workbook = XLSX.read(arrayBuffer, { type: 'array' })
   const rows = []

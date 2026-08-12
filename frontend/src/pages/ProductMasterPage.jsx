@@ -92,7 +92,7 @@ export const seedProducts = Array.from({ length: 15 }, (_, unitIndex) => {
   })
 }).flat()
 
-export default function ProductMasterPage({ products, setProducts }) {
+export default function ProductMasterPage({ products, setProducts, canManageInventory = false, canImportInventory = false }) {
   const [activeTab, setActiveTab] = useState('products')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -170,19 +170,19 @@ export default function ProductMasterPage({ products, setProducts }) {
 
   const deleteProduct = (product) => setProducts((current) => current.filter((item) => item !== product))
 
-  if (selectedProduct) return <ProductRecordView product={selectedProduct} onBack={() => setSelectedProduct(null)} onEdit={() => { setEditingProduct(selectedProduct); setSelectedProduct(null) }} />
+  if (selectedProduct) return <ProductRecordView product={selectedProduct} canManageInventory={canManageInventory} onBack={() => setSelectedProduct(null)} onEdit={() => { setEditingProduct(selectedProduct); setSelectedProduct(null) }} />
   if (editingProduct) return <ProductRecordEditor product={editingProduct} onBack={() => setEditingProduct(null)} onSave={saveProduct} />
 
   return (
     <>
       <div className="incident-list-head product-master-heading">
         <div className="incident-list-title"><h1>Product master</h1><p>Fixed product, material, and subsystem inventory register.</p></div>
-        <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>
+        {canImportInventory && <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>}
       </div>
 
       <div className="tab-bar product-master-tabs" role="tablist">
         <button className={`tab-btn ${activeTab === 'products' ? 'active' : ''}`} onClick={() => setActiveTab('products')}>Product register <span>{products.length}</span></button>
-        <button className={`tab-btn ${activeTab === 'imports' ? 'active' : ''}`} onClick={() => setActiveTab('imports')}>Excel imports</button>
+        {canImportInventory && <button className={`tab-btn ${activeTab === 'imports' ? 'active' : ''}`} onClick={() => setActiveTab('imports')}>Excel imports</button>}
       </div>
 
       {activeTab === 'products' && (
@@ -192,11 +192,11 @@ export default function ProductMasterPage({ products, setProducts }) {
             <span className="incident-list-count">{filteredProducts.length} of {products.length} records</span>
             <div className="incident-command-actions product-command-actions">
               <button className="compact-button secondary" onClick={() => setShowColumns((open) => !open)}><Settings2 size={15} /> Columns <ChevronDown size={14} /></button>
-              <button className="compact-button primary" onClick={() => setActiveTab('imports')}><Upload size={15} /> Import Excel</button>
+              {canImportInventory && <button className="compact-button primary" onClick={() => setActiveTab('imports')}><Upload size={15} /> Import Excel</button>}
             </div>
             {showColumns && <div className="column-picker product-column-picker"><div className="column-picker-head"><strong>Display columns</strong><button onClick={() => setShowColumns(false)}><X size={15} /></button></div>{productColumns.map(({ key, label }) => <label key={key}><input type="checkbox" checked={visibleColumns.includes(key)} onChange={() => toggleColumn(key)} /> {label}</label>)}</div>}
           </div>
-          <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleProducts.map((product) => <tr key={product.productRecordId || `${product.product_serial_number}-${product.material_serial_number}-${product.part_number}`}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedProduct(product)}>{product[key]}</button> : product[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View product" onClick={() => setSelectedProduct(product)}><Eye size={15} /></button><button className="action-btn" title="Edit product" onClick={() => setEditingProduct(product)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete product" onClick={() => deleteProduct(product)}><Trash2 size={15} /></button></div></td></tr>)}{!filteredProducts.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No products match the current search.</td></tr>}</tbody></table></div></div>
+          <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleProducts.map((product) => <tr key={product.productRecordId || `${product.product_serial_number}-${product.material_serial_number}-${product.part_number}`}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedProduct(product)}>{product[key]}</button> : product[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View product" onClick={() => setSelectedProduct(product)}><Eye size={15} /></button>{canManageInventory && <><button className="action-btn" title="Edit product" onClick={() => setEditingProduct(product)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete product" onClick={() => deleteProduct(product)}><Trash2 size={15} /></button></>}</div></td></tr>)}{!filteredProducts.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No products match the current search.</td></tr>}</tbody></table></div></div>
           <footer className="incident-pagination"><span>Showing {filteredProducts.length ? `${(Math.min(page, totalPages) - 1) * pageSize + 1}-${Math.min(Math.min(page, totalPages) * pageSize, filteredProducts.length)} of ${filteredProducts.length}` : '0'} record{filteredProducts.length === 1 ? '' : 's'}</span><div className="incident-page-controls"><button className="compact-button secondary" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button><span>Page {Math.min(page, totalPages)} of {totalPages}</span><button className="compact-button secondary" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button></div></footer>
         </section>
       )}
@@ -258,8 +258,8 @@ function ProductImportWorkbench({ importIdentity, setImportIdentity, routeCards,
   </section>
 }
 
-function ProductRecordView({ product, onBack, onEdit }) {
-  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product master</button><h1>{product.material_serial_number}</h1><p>{product.material_description || 'Product material record'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button><button className="incident-submit-button" onClick={onEdit}>Edit product</button></div></header><section className="product-record-sheet">{productColumns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{product[key] || '--'}</strong></div>)}</section>{(product.productJournal || []).length > 0 && <section className="product-journal"><h2>Product journal</h2><ol>{[...product.productJournal].reverse().map((entry) => <li key={entry.id}><strong>{entry.field}</strong><span><s>{entry.previous}</s> to <b>{entry.next}</b></span><small>{entry.incidentNumber} · {entry.updatedBy} · {new Date(entry.updatedAt).toLocaleString('en-GB')}</small></li>)}</ol></section>}</section>
+function ProductRecordView({ product, canManageInventory, onBack, onEdit }) {
+  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product master</button><h1>{product.material_serial_number}</h1><p>{product.material_description || 'Product material record'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button>{canManageInventory && <button className="incident-submit-button" onClick={onEdit}>Edit product</button>}</div></header><section className="product-record-sheet">{productColumns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{product[key] || '--'}</strong></div>)}</section>{(product.productJournal || []).length > 0 && <section className="product-journal"><h2>Product journal</h2><ol>{[...product.productJournal].reverse().map((entry) => <li key={entry.id}><strong>{entry.field}</strong><span><s>{entry.previous}</s> to <b>{entry.next}</b></span><small>{entry.incidentNumber} · {entry.updatedBy} · {new Date(entry.updatedAt).toLocaleString('en-GB')}</small></li>)}</ol></section>}</section>
 }
 
 function ProductRecordEditor({ product, onBack, onSave }) {
