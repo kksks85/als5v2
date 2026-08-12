@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, RepairExecutionRecord, SubcontractRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, RepairExecutionRecord, SubcontractRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -27,6 +27,7 @@ ALLOWED_RESOURCES = {
     "repair_executions",
     "process_configurations",
     "email_settings",
+    "email_templates",
     "email_logs",
     "outbound_email_rules",
     "mail_correspondence",
@@ -47,6 +48,7 @@ RESOURCE_MODELS = {
     "repair_executions": RepairExecutionRecord,
     "process_configurations": ProcessConfigurationRecord,
     "email_settings": EmailSettingsRecord,
+    "email_templates": EmailTemplateRecord,
     "email_logs": EmailLogRecord,
     "outbound_email_rules": OutboundEmailRuleRecord,
     "mail_correspondence": MailCorrespondenceRecord,
@@ -76,15 +78,30 @@ class BulkRecordsInput(BaseModel):
     records: list[RecordInput] = Field(max_length=20000)
 
 
+def reject_compressed_knowledge_attachments(payload: dict[str, Any]) -> None:
+    for attachment in payload.get("attachments", []):
+        name = str(attachment.get("name", "")).lower()
+        content_type = str(attachment.get("type", "")).lower()
+        if name.endswith((".zip", ".7z", ".rar", ".tar", ".gz", ".gzip", ".bz2", ".xz", ".zst", ".cab", ".iso")) or any(token in content_type for token in ("zip", "compressed", "rar", "7z", "x-tar", "gzip", "bzip", "x-xz")):
+            raise HTTPException(status_code=422, detail="Compressed files are not permitted for knowledge documents.")
+
+
 def validate_resource(resource: str) -> str:
     if resource not in ALLOWED_RESOURCES and resource not in PRODUCT_MASTER_RESOURCES:
         raise HTTPException(status_code=404, detail="Unknown record resource.")
     return resource
 
 
+def prune_expired_email_logs(database: Session) -> None:
+    database.execute(delete(EmailLogRecord).where(EmailLogRecord.created_at < datetime.now(UTC) - timedelta(days=10)))
+
+
 @router.get("/{resource}")
 def list_records(resource: str, database: Session = Depends(get_db)) -> dict[str, list[dict[str, Any]]]:
     validate_resource(resource)
+    if resource == "email_logs":
+        prune_expired_email_logs(database)
+        database.commit()
     if resource in PRODUCT_MASTER_RESOURCES:
         records = database.scalars(select(ProductMasterRecord).where(ProductMasterRecord.resource == resource).order_by(ProductMasterRecord.record_id)).all()
         return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
@@ -140,6 +157,9 @@ def delete_record(resource: str, record_id: str, database: Session = Depends(get
 def write_records(resource: str, records: list[RecordInput], database: Session) -> None:
     if not records:
         return
+    if resource == "knowledge_documents":
+        for record in records:
+            reject_compressed_knowledge_attachments(record.payload)
     now = datetime.now(UTC)
     if resource in PRODUCT_MASTER_RESOURCES:
         statement = insert(ProductMasterRecord).values([

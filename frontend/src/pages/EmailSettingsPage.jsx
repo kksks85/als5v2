@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import {
   Mail, Send, ArrowDownToLine, ArrowUpFromLine, FileCode, FlaskConical,
-  Plus, Trash2, Pencil, CheckCircle2, XCircle, Play, Save, ChevronRight,
-  Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered, Link2, Undo2, Redo2, ImagePlus, Table2
+  Plus, Trash2, Pencil, Copy, CheckCircle2, XCircle, Play, Save, ChevronRight,
+  Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered, Link2, Undo2, Redo2, ImagePlus, Table2, Eye, RefreshCw, X
 } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -35,13 +35,23 @@ const emptyOutboundRule = {
   name: '',
   trigger: 'On incident creation',
   recipientType: 'assigned_to',
-  templateId: 'new_incident_created',
+  templateId: 'incident_creation',
   groupIds: [],
   userIds: [],
   externalEmails: '',
 }
 
+const emptyInboundRule = {
+  name: '',
+  condition: '',
+  action: 'Create incident — assign to group',
+  targetGroup: '',
+  priority: 'Normal',
+  active: true,
+}
+
 const recipientOptions = [
+  { value: 'mentioned_users', label: 'Mentioned Users in Work Notes' },
   { value: 'requester', label: 'Requester' },
   { value: 'requested_for', label: 'Requested For' },
   { value: 'assigned_to', label: 'Assigned To' },
@@ -58,32 +68,11 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const splitEmails = (value) => [...new Set(value.split(/[;,\s]+/).map((email) => email.trim().toLowerCase()).filter(Boolean))]
 
 const sampleTemplates = [{
-  id: 'new_incident_created',
-  name: 'New incident created',
-  description: 'Confirms a newly reported incident and summarizes its registered details.',
-  subject: 'New Incident {{incident_id}} with {{priority}} priority has been created',
-  body: `Hi Team,
-
-A new incident has been reported.
-
-Incident Details
-
-Incident Number: {{incident_id}}
-Short Description: {{title}}
-Priority: {{priority}}
-Severity: {{severity}}
-Category: {{category}}
-Status: Registered
-Submitted On: {{created_at}}
-Reported By: {{requester_name}}
-Assigned Group: {{assignment_group}}
-
-Our support team will review your incident and initiate the required actions. You will receive further notifications as the incident progresses through its lifecycle.
-
-Thank you.
-
-Regards,
-Service Management System`,
+  id: 'incident_creation',
+  name: 'Incident creation notification',
+  description: 'Notifies the support team that a new incident has been created.',
+  subject: 'Incident {{incident_id}} has been created',
+  body: '<p>Dear Team,</p><p>Greetings from <strong>TASL Customer Support Team</strong>.</p><p>We would like to inform you that a new incident has been successfully created with the following details:</p><table role="presentation" border="1" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;border-collapse:collapse;border:1px solid #222;text-align:left;"><thead><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Incident Details</th><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Information</th></tr></thead><tbody><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Incident Number</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{incident_id}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Customer</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{customer}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Created On / Opened On</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{opened}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Priority</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{priority}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Product Category</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{category}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Product Serial Number</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{serial_number}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Short Description</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{title}}</td></tr><tr><th align="left" style="padding:8px;border:1px solid #222;text-align:left;">Description</th><td align="left" style="padding:8px;border:1px solid #222;text-align:left;">{{description}}</td></tr></tbody></table><p>Please refer to the <strong>Incident Number [{{incident_id}}]</strong> in all future communications regarding this issue.</p><p>Regards,<br><strong>TASL Customer Support Team</strong></p>',
   usedBy: 0,
 }]
 
@@ -182,11 +171,18 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
   const [outboundRules, setOutboundRules] = useState(sampleOutboundRules)
   const [templates, setTemplates] = useState(sampleTemplates)
   const [showRuleForm, setShowRuleForm] = useState(false)
+  const [showInboundRuleForm, setShowInboundRuleForm] = useState(false)
+  const [inboundRuleDraft, setInboundRuleDraft] = useState(emptyInboundRule)
+  const [editingInboundRuleId, setEditingInboundRuleId] = useState(null)
+  const [editingOutboundRuleId, setEditingOutboundRuleId] = useState(null)
   const [outboundRuleDraft, setOutboundRuleDraft] = useState(emptyOutboundRule)
   const [outboundRuleError, setOutboundRuleError] = useState('')
   const [showTemplateForm, setShowTemplateForm] = useState(false)
   const [editingTemplateId, setEditingTemplateId] = useState(null)
   const [templateDraft, setTemplateDraft] = useState(emptyTemplateDraft)
+  const [templateToCopy, setTemplateToCopy] = useState(null)
+  const [copiedTemplateName, setCopiedTemplateName] = useState('')
+  const [copyTemplateError, setCopyTemplateError] = useState('')
   const [templateEditor, setTemplateEditor] = useState(null)
   const [templateTableId, setTemplateTableId] = useState('incident')
   const [testResult, setTestResult] = useState(null)
@@ -194,8 +190,23 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
   const [saveMessage, setSaveMessage] = useState('')
   const [emailLogs, setEmailLogs] = useState([])
   const [logFilter, setLogFilter] = useState('All')
+  const [logSort, setLogSort] = useState('newest')
+  const [logPage, setLogPage] = useState(1)
+  const [selectedEmailLog, setSelectedEmailLog] = useState(null)
+  const [viewingTemplate, setViewingTemplate] = useState(null)
+  const [logsLoading, setLogsLoading] = useState(false)
   const templateTables = emailTemplateTables(data, assignmentGroups, users)
   const selectedTemplateTable = templateTables.find((table) => table.id === templateTableId) || templateTables[0]
+  const loadEmailLogs = async () => {
+    setLogsLoading(true)
+    try {
+      const records = await recordApi.list('email_logs')
+      setEmailLogs(records.map((record) => record.payload))
+      setLogPage(1)
+    } finally {
+      setLogsLoading(false)
+    }
+  }
 
   useEffect(() => {
     recordApi.list('email_settings')
@@ -204,6 +215,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
         if (!settings) return
         setInbound((current) => ({ ...current, ...(settings.inbound || {}), password: '' }))
         setOutbound((current) => ({ ...current, ...(settings.outbound || {}), password: '' }))
+        setInboundRules(Array.isArray(settings.inboundRules) ? settings.inboundRules : sampleInboundRules)
       })
       .catch(() => {})
   }, [])
@@ -215,10 +227,26 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
   }, [])
 
   useEffect(() => {
-    recordApi.list('email_logs')
-      .then((records) => setEmailLogs(records.map((record) => record.payload).sort((left, right) => new Date(right.occurredAt) - new Date(left.occurredAt))))
+    recordApi.list('email_templates')
+      .then((records) => setTemplates(records.length ? records.map((record) => record.payload) : sampleTemplates))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (activeTab !== 'logs') return undefined
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void loadEmailLogs()
+    }
+    void loadEmailLogs()
+    const refreshTimer = window.setInterval(refreshWhenVisible, 15000)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [activeTab])
 
   const writeEmailLog = async ({ direction, event, status, recipient = '', details }) => {
     const entry = { id: `email-log-${Date.now()}-${Math.random()}`, direction, event, status, recipient, details, occurredAt: new Date().toISOString() }
@@ -294,7 +322,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
       const persistedOutbound = { ...outbound, password: '' }
       await recordApi.bulkUpsert('email_settings', [{
         record_id: 'email-configuration',
-        payload: { inbound: persistedInbound, outbound: persistedOutbound, updatedAt: new Date().toISOString() },
+        payload: { inbound: persistedInbound, outbound: persistedOutbound, inboundRules, updatedAt: new Date().toISOString() },
       }])
       const message = `${type === 'inbound' ? 'Inbound' : 'Outbound'} settings saved. Passwords are managed by the API service and are not stored in browser settings.`
       setSaveMessage(message)
@@ -308,6 +336,33 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
 
   const applyInboundProvider = (provider) => setInbound((current) => ({ ...current, ...inboundProviderPresets[provider], provider }))
   const applyOutboundProvider = (provider) => setOutbound((current) => ({ ...current, ...outboundProviderPresets[provider], provider }))
+  const saveInboundRules = async (nextRules) => {
+    const persistedInbound = { ...inbound, password: '' }
+    const persistedOutbound = { ...outbound, password: '' }
+    await recordApi.bulkUpsert('email_settings', [{
+      record_id: 'email-configuration',
+      payload: { inbound: persistedInbound, outbound: persistedOutbound, inboundRules: nextRules, updatedAt: new Date().toISOString() },
+    }])
+    setInboundRules(nextRules)
+  }
+  const openInboundRuleForm = (rule = null) => {
+    setEditingInboundRuleId(rule?.id || null)
+    setInboundRuleDraft(rule ? { ...emptyInboundRule, ...rule } : emptyInboundRule)
+    setShowInboundRuleForm(true)
+  }
+  const saveInboundRule = async () => {
+    if (!inboundRuleDraft.name.trim() || !inboundRuleDraft.condition.trim()) return
+    const rule = { ...inboundRuleDraft, id: editingInboundRuleId || `inbound-rule-${Date.now()}`, name: inboundRuleDraft.name.trim(), condition: inboundRuleDraft.condition.trim() }
+    const nextRules = editingInboundRuleId ? inboundRules.map((current) => current.id === editingInboundRuleId ? rule : current) : [...inboundRules, rule]
+    try {
+      await saveInboundRules(nextRules)
+      setShowInboundRuleForm(false)
+      setEditingInboundRuleId(null)
+      setInboundRuleDraft(emptyInboundRule)
+    } catch (error) {
+      setSaveMessage(`Inbound rule could not be saved: ${error.message}`)
+    }
+  }
 
   const activeUsers = users.filter((user) => user.status === 'Active' && user.email)
   const activeGroups = assignmentGroups.filter((group) => group.active)
@@ -333,7 +388,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
     if (outboundRuleDraft.recipientType === 'custom_recipients' && !outboundRuleDraft.userIds.length && !externalEmails.length) { setOutboundRuleError('Select an internal user or enter at least one external email address.'); return }
     if (externalEmails.some((email) => !emailPattern.test(email))) { setOutboundRuleError('Enter valid email addresses separated by commas or semicolons.'); return }
     const rule = {
-      id: `outbound-rule-${Date.now()}`,
+      id: editingOutboundRuleId || `outbound-rule-${Date.now()}`,
       name: outboundRuleDraft.name.trim(),
       trigger: outboundRuleDraft.trigger,
       recipientType: outboundRuleDraft.recipientType,
@@ -344,17 +399,25 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
       userIds: outboundRuleDraft.userIds,
       externalEmails,
       resolvedRecipients: resolveRuleRecipients({ ...outboundRuleDraft, externalEmails: externalEmails.join(',') }),
-      active: true,
+      active: editingOutboundRuleId ? outboundRules.find((current) => current.id === editingOutboundRuleId)?.active ?? true : true,
     }
     try {
       await recordApi.bulkUpsert('outbound_email_rules', [{ record_id: rule.id, payload: rule }])
-      setOutboundRules((current) => [...current, rule])
+      setOutboundRules((current) => editingOutboundRuleId ? current.map((currentRule) => currentRule.id === editingOutboundRuleId ? rule : currentRule) : [...current, rule])
       setOutboundRuleDraft(emptyOutboundRule)
       setOutboundRuleError('')
       setShowRuleForm(false)
+      setEditingOutboundRuleId(null)
     } catch (error) {
       setOutboundRuleError(`Rule could not be saved: ${error.message}`)
     }
+  }
+
+  const openOutboundRuleForm = (rule = null) => {
+    setEditingOutboundRuleId(rule?.id || null)
+    setOutboundRuleDraft(rule ? { ...emptyOutboundRule, ...rule, externalEmails: Array.isArray(rule.externalEmails) ? rule.externalEmails.join(', ') : rule.externalEmails || '' } : emptyOutboundRule)
+    setOutboundRuleError('')
+    setShowRuleForm(true)
   }
 
   const openNewTemplateForm = () => {
@@ -376,7 +439,32 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
     setTemplateEditor(null)
   }
 
-  const saveTemplate = () => {
+  const openCopyTemplateDialog = (template) => {
+    setTemplateToCopy(template)
+    setCopiedTemplateName(`${template.name} copy`)
+    setCopyTemplateError('')
+  }
+
+  const createTemplateCopy = () => {
+    const name = copiedTemplateName.trim()
+    if (!name) {
+      setCopyTemplateError('Enter a name for the new template.')
+      return
+    }
+    if (templates.some((template) => template.name.toLowerCase() === name.toLowerCase())) {
+      setCopyTemplateError('A template with this name already exists.')
+      return
+    }
+    const id = `${templateToCopy.id}-copy-${Date.now()}`
+    setEditingTemplateId(null)
+    setTemplateDraft({ id, name, subject: templateToCopy.subject, body: templateToCopy.body })
+    setTemplateToCopy(null)
+    setCopiedTemplateName('')
+    setCopyTemplateError('')
+    setShowTemplateForm(true)
+  }
+
+  const saveTemplate = async () => {
     if (!templateDraft.id.trim() || !templateDraft.name.trim() || !templateDraft.subject.trim() || !templateDraft.body.trim()) return
     const nextTemplate = {
       ...templateDraft,
@@ -387,16 +475,37 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
       description: editingTemplateId ? templates.find((template) => template.id === editingTemplateId)?.description : 'Reusable notification template.',
       usedBy: editingTemplateId ? templates.find((template) => template.id === editingTemplateId)?.usedBy ?? 0 : 0,
     }
+    try {
+      await recordApi.bulkUpsert('email_templates', [{ record_id: nextTemplate.id, payload: nextTemplate }])
+    } catch {
+      return
+    }
     setTemplates((current) => editingTemplateId
       ? current.map((template) => template.id === editingTemplateId ? nextTemplate : template)
       : [...current, nextTemplate])
     closeTemplateForm()
+  }
+  const deleteTemplate = async (template) => {
+    if (!window.confirm(`Delete email template "${template.name}"?`)) return
+    try {
+      await recordApi.remove('email_templates', template.id)
+      setTemplates((current) => current.filter((currentTemplate) => currentTemplate.id !== template.id))
+    } catch (error) {
+      setSaveMessage(`Template could not be deleted: ${error.message}`)
+    }
   }
   const insertTemplateColumn = (column) => {
     const token = `{{${selectedTemplateTable.id}.${column}}}`
     if (templateEditor) templateEditor.chain().focus().insertContent(token).run()
     else setTemplateDraft((current) => ({ ...current, body: `${current.body}${current.body ? ' ' : ''}${token}` }))
   }
+  const visibleEmailLogs = emailLogs
+    .filter((entry) => logFilter === 'All' || entry.direction === logFilter || entry.status === logFilter)
+    .sort((left, right) => (logSort === 'newest' ? -1 : 1) * ((new Date(left.occurredAt).getTime() || 0) - (new Date(right.occurredAt).getTime() || 0)))
+  const logPageSize = 100
+  const logPageCount = Math.max(1, Math.ceil(visibleEmailLogs.length / logPageSize))
+  const currentLogPage = Math.min(logPage, logPageCount)
+  const pagedEmailLogs = visibleEmailLogs.slice((currentLogPage - 1) * logPageSize, currentLogPage * logPageSize)
 
   return (
     <>
@@ -491,27 +600,27 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
           <>
             <div className="rules-header">
               <div><h2>Inbound rules</h2><p>Define how incoming emails are processed and routed to incidents.</p></div>
-              <button className="primary-button" onClick={() => { setShowRuleForm(true); setOutboundRuleError('') }}><Plus size={16} /> Add rule</button>
+              <button className="primary-button" onClick={() => openInboundRuleForm()}><Plus size={16} /> Add rule</button>
             </div>
-            {showRuleForm && (
+            {showInboundRuleForm && (
               <div className="form-panel">
-                <div className="form-panel-head"><h2>New inbound rule</h2><button className="text-button" onClick={() => setShowRuleForm(false)}>Cancel</button></div>
+                <div className="form-panel-head"><h2>{editingInboundRuleId ? 'Edit inbound rule' : 'New inbound rule'}</h2><button className="text-button" onClick={() => setShowInboundRuleForm(false)}>Cancel</button></div>
                 <div className="form-grid">
-                  <div className="field full-width"><label>Rule name</label><input placeholder="e.g. VIP customer routing" /></div>
-                  <div className="field full-width"><label>Condition</label><input placeholder='e.g. From domain = "army.ug" AND Subject contains "service"' /><p className="field-hint">Use AND/OR logic with field matching</p></div>
+                  <div className="field full-width"><label>Rule name</label><input placeholder="e.g. VIP customer routing" value={inboundRuleDraft.name} onChange={(event) => setInboundRuleDraft((current) => ({ ...current, name: event.target.value }))} /></div>
+                  <div className="field full-width"><label>Condition</label><input placeholder='e.g. From domain = "army.ug" AND Subject contains "service"' value={inboundRuleDraft.condition} onChange={(event) => setInboundRuleDraft((current) => ({ ...current, condition: event.target.value }))} /><p className="field-hint">Use AND/OR logic with field matching</p></div>
                   <div className="field full-width"><label>Action</label>
-                    <select className="toolbar-select full">
+                    <select className="toolbar-select full" value={inboundRuleDraft.action} onChange={(event) => setInboundRuleDraft((current) => ({ ...current, action: event.target.value }))}>
                       <option>Create incident — assign to group</option><option>Create incident — set priority</option><option>Forward to email</option><option>Ignore / archive</option>
                     </select>
                   </div>
                   <div className="field"><label>Target group</label>
-                    <select className="toolbar-select full"><option>Tier 1 Support</option><option>Tier 2 Support</option><option>Management</option></select>
+                    <select className="toolbar-select full" value={inboundRuleDraft.targetGroup} onChange={(event) => setInboundRuleDraft((current) => ({ ...current, targetGroup: event.target.value }))}><option value="">No group selected</option>{activeGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select>
                   </div>
                   <div className="field"><label>Priority</label>
-                    <select className="toolbar-select full"><option>Normal</option><option>High</option><option>Critical</option><option>Low</option></select>
+                    <select className="toolbar-select full" value={inboundRuleDraft.priority} onChange={(event) => setInboundRuleDraft((current) => ({ ...current, priority: event.target.value }))}><option>Normal</option><option>High</option><option>Critical</option><option>Low</option></select>
                   </div>
                 </div>
-                <div className="form-actions"><button className="primary-button">Save rule</button></div>
+                <div className="form-actions"><button className="primary-button" onClick={saveInboundRule}>Save rule</button></div>
               </div>
             )}
             <div className="data-table-wrap">
@@ -526,8 +635,8 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
                       <td><span className={`badge ${r.active ? 'new' : 'closed'}`}>{r.active ? 'Active' : 'Inactive'}</span></td>
                       <td>
                         <div className="action-group">
-                          <button className="row-action" title="Edit"><Pencil size={14} /></button>
-                          <button className="row-action danger" title="Delete" onClick={() => setInboundRules(inboundRules.filter(x => x.id !== r.id))}><Trash2 size={14} /></button>
+                          <button className="row-action" title="Edit" onClick={() => openInboundRuleForm(r)}><Pencil size={14} /></button>
+                          <button className="row-action danger" title="Delete" onClick={async () => { if (window.confirm(`Delete inbound rule "${r.name}"?`)) await saveInboundRules(inboundRules.filter((rule) => rule.id !== r.id)) }}><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -543,16 +652,16 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
           <>
             <div className="rules-header">
               <div><h2>Outbound rules</h2><p>Define when and to whom notification emails are sent.</p></div>
-              <button className="primary-button" onClick={() => setShowRuleForm(!showRuleForm)}><Plus size={16} /> Add rule</button>
+              <button className="primary-button" onClick={() => openOutboundRuleForm()}><Plus size={16} /> Add rule</button>
             </div>
             {showRuleForm && (
               <div className="form-panel">
-                <div className="form-panel-head"><h2>New outbound rule</h2><button className="text-button" onClick={() => setShowRuleForm(false)}>Cancel</button></div>
+                <div className="form-panel-head"><h2>{editingOutboundRuleId ? 'Edit outbound rule' : 'New outbound rule'}</h2><button className="text-button" onClick={() => setShowRuleForm(false)}>Cancel</button></div>
                 <div className="form-grid">
                   <div className="field"><label>Rule name</label><input placeholder="e.g. Assignment notification" value={outboundRuleDraft.name} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, name: event.target.value }))} /></div>
                   <div className="field"><label>Trigger event</label>
                     <select className="toolbar-select full" value={outboundRuleDraft.trigger} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, trigger: event.target.value }))}>
-                      <option>On incident creation</option><option>On status change</option><option>On assignment change</option><option>Before SLA breach</option><option>On resolution</option><option>On closure</option>
+                      <option>On incident creation</option><option>On work note update</option><option>On status change</option><option>On assignment change</option><option>Before SLA breach</option><option>On resolution</option><option>On closure</option>
                     </select>
                   </div>
                   <div className="field"><label>Recipients</label>
@@ -582,7 +691,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
                       <td><span className={`badge ${r.active ? 'new' : 'closed'}`}>{r.active ? 'Active' : 'Inactive'}</span></td>
                       <td>
                         <div className="action-group">
-                          <button className="row-action" title="Edit"><Pencil size={14} /></button>
+                          <button className="row-action" title="Edit" onClick={() => openOutboundRuleForm(r)}><Pencil size={14} /></button>
                           <button className="row-action danger" title="Delete" onClick={async () => { await recordApi.remove('outbound_email_rules', r.id); setOutboundRules((current) => current.filter((rule) => rule.id !== r.id)) }}><Trash2 size={14} /></button>
                         </div>
                       </td>
@@ -624,8 +733,10 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
                   <div className="template-card-foot">
                     <span className="badge in-progress">Used by {t.usedBy} rule{t.usedBy !== 1 ? 's' : ''}</span>
                     <div className="action-group">
+                      <button className="row-action" title="Copy template" onClick={() => openCopyTemplateDialog(t)}><Copy size={14} /></button>
+                      <button className="row-action" title="View template" onClick={() => setViewingTemplate(t)}><Eye size={14} /></button>
                       <button className="row-action" title="Edit template" onClick={() => openEditTemplateForm(t)}><Pencil size={14} /></button>
-                      <button className="row-action danger" title="Delete"><Trash2 size={14} /></button>
+                      <button className="row-action danger" title="Delete template" onClick={() => deleteTemplate(t)}><Trash2 size={14} /></button>
                     </div>
                   </div>
                 </div>
@@ -674,11 +785,15 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
 
         {activeTab === 'logs' && (
           <section className="testing-section">
-            <div className="rules-header"><div><h2>Email logs</h2><p>Review inbound and outbound email activity, test attempts, and captured errors.</p></div><label className="approval-filter-select"><select value={logFilter} onChange={(event) => setLogFilter(event.target.value)}><option value="All">All activity</option><option value="Inbound">Inbound</option><option value="Outbound">Outbound</option><option value="Error">Errors</option></select></label></div>
-            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Time</th><th>Direction</th><th>Event</th><th>Recipient</th><th>Status</th><th>Details</th></tr></thead><tbody>{emailLogs.filter((entry) => logFilter === 'All' || entry.direction === logFilter || entry.status === logFilter).map((entry) => <tr key={entry.id}><td>{new Date(entry.occurredAt).toLocaleString('en-GB')}</td><td>{entry.direction}</td><td>{entry.event}</td><td>{entry.recipient || '--'}</td><td><span className={`badge ${entry.status === 'Error' ? 'closed' : 'new'}`}>{entry.status}</span></td><td>{entry.details}</td></tr>)}{!emailLogs.filter((entry) => logFilter === 'All' || entry.direction === logFilter || entry.status === logFilter).length && <tr><td colSpan="6" className="empty-row">No email logs match the current filter.</td></tr>}</tbody></table></div>
+            <div className="rules-header"><div><h2>Email logs</h2><p>Review inbound and outbound email activity, test attempts, and captured errors.</p></div><div className="email-log-controls"><label className="approval-filter-select"><span>Activity</span><select value={logFilter} onChange={(event) => { setLogFilter(event.target.value); setLogPage(1) }}><option value="All">All activity</option><option value="Inbound">Inbound</option><option value="Outbound">Outbound</option><option value="Error">Errors</option></select></label><label className="approval-filter-select"><span>Sent date and time</span><select value={logSort} onChange={(event) => { setLogSort(event.target.value); setLogPage(1) }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label><button type="button" className="row-action" title="Refresh email logs" aria-label="Refresh email logs" onClick={() => void loadEmailLogs()} disabled={logsLoading}><RefreshCw size={14} className={logsLoading ? 'spin-icon' : ''} /></button></div></div>
+            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Sent date and time</th><th>Direction</th><th>Event</th><th>Recipient</th><th>Status</th><th>Details</th><th aria-label="Actions" /></tr></thead><tbody>{pagedEmailLogs.map((entry) => <tr key={entry.id}><td>{new Date(entry.occurredAt).toLocaleString('en-GB')}</td><td>{entry.direction}</td><td>{entry.event}</td><td>{entry.recipient || '--'}</td><td><span className={`badge ${['Error', 'Failed'].includes(entry.status) ? 'closed' : 'new'}`}>{entry.status}</span></td><td>{entry.details}</td><td><button type="button" className="row-action" title="View email" aria-label={`View email for ${entry.recipient || 'log entry'}`} onClick={() => setSelectedEmailLog(entry)}><Eye size={14} /></button></td></tr>)}{!visibleEmailLogs.length && <tr><td colSpan="7" className="empty-row">No email logs match the current filter.</td></tr>}</tbody></table></div>
+            {visibleEmailLogs.length > logPageSize && <div className="email-log-pagination"><span>Showing {(currentLogPage - 1) * logPageSize + 1}-{Math.min(currentLogPage * logPageSize, visibleEmailLogs.length)} of {visibleEmailLogs.length}</span><div><button type="button" className="secondary-button" onClick={() => setLogPage((page) => Math.max(1, page - 1))} disabled={currentLogPage === 1}>Previous</button><span>Page {currentLogPage} of {logPageCount}</span><button type="button" className="secondary-button" onClick={() => setLogPage((page) => Math.min(logPageCount, page + 1))} disabled={currentLogPage === logPageCount}>Next</button></div></div>}
           </section>
         )}
       </div>
+      {templateToCopy && <div className="email-log-preview-backdrop" role="presentation" onMouseDown={() => setTemplateToCopy(null)}><section className="email-log-preview" role="dialog" aria-modal="true" aria-labelledby="copy-template-title" onMouseDown={(event) => event.stopPropagation()}><header><div><p>Copy email template</p><h2 id="copy-template-title">Create a new template</h2><span>Based on: {templateToCopy.name}</span></div><button type="button" className="row-action" title="Close copy template dialog" aria-label="Close copy template dialog" onClick={() => setTemplateToCopy(null)}><X size={16} /></button></header><div className="email-log-preview-body"><div className="field"><label>New template name</label><input autoFocus value={copiedTemplateName} onChange={(event) => { setCopiedTemplateName(event.target.value); setCopyTemplateError('') }} onKeyDown={(event) => { if (event.key === 'Enter') createTemplateCopy() }} placeholder="Enter a new template name" />{copyTemplateError && <p className="field-hint form-error">{copyTemplateError}</p>}</div></div><footer><button type="button" className="secondary-button" onClick={() => setTemplateToCopy(null)}>Cancel</button><button type="button" className="primary-button" onClick={createTemplateCopy}><Copy size={14} /> Copy template</button></footer></section></div>}
+      {viewingTemplate && <div className="email-log-preview-backdrop" role="presentation" onMouseDown={() => setViewingTemplate(null)}><section className="email-log-preview" role="dialog" aria-modal="true" aria-labelledby="template-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><p>Email template</p><h2 id="template-preview-title">{viewingTemplate.name}</h2><span>Subject: {viewingTemplate.subject}</span></div><button type="button" className="row-action" title="Close template preview" aria-label="Close template preview" onClick={() => setViewingTemplate(null)}><X size={16} /></button></header><div className="email-log-preview-body"><iframe title={`${viewingTemplate.name} preview`} sandbox="" srcDoc={richTextHtml(viewingTemplate.body)} /></div><footer><button type="button" className="secondary-button" onClick={() => setViewingTemplate(null)}>Close</button><button type="button" className="primary-button" onClick={() => { const template = viewingTemplate; setViewingTemplate(null); openEditTemplateForm(template) }}><Pencil size={14} /> Edit template</button></footer></section></div>}
+      {selectedEmailLog && <div className="email-log-preview-backdrop" role="presentation" onMouseDown={() => setSelectedEmailLog(null)}><section className="email-log-preview" role="dialog" aria-modal="true" aria-labelledby="email-log-preview-title" onMouseDown={(event) => event.stopPropagation()}><header><div><p>Outbound email</p><h2 id="email-log-preview-title">{selectedEmailLog.subject || selectedEmailLog.event}</h2><span>To: {selectedEmailLog.recipient || '--'} · {new Date(selectedEmailLog.occurredAt).toLocaleString('en-GB')}</span></div><button type="button" className="row-action" title="Close email preview" aria-label="Close email preview" onClick={() => setSelectedEmailLog(null)}><X size={16} /></button></header><div className="email-log-preview-body">{selectedEmailLog.content ? <iframe title="Email content" sandbox="" srcDoc={selectedEmailLog.content} /> : <p className="empty-hint">This historical log contains delivery information only. Message content is saved for emails sent after email-log viewing was enabled.</p>}</div><footer><span className={`badge ${['Error', 'Failed'].includes(selectedEmailLog.status) ? 'closed' : 'new'}`}>{selectedEmailLog.status}</span><button type="button" className="secondary-button" onClick={() => setSelectedEmailLog(null)}>Close</button></footer></section></div>}
     </>
   )
 }

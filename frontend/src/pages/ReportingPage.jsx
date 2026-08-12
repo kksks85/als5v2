@@ -7,7 +7,7 @@ import {
   Trash2, WandSparkles, X,
 } from 'lucide-react'
 import {
-  createBlankReport, createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog,
+  buildReportPromptGuide, createBlankReport, createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog,
   reportOperators, reportTypes, runReportDefinition,
 } from '../data/reportEngine'
 
@@ -145,6 +145,7 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
       <input aria-label="Describe your report" value={nlpPrompt} onChange={(event) => setNlpPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generateFromPrompt()} placeholder="Example: Show open incidents older than one month by customer as a bar chart" />
       <button className="compact-button primary" onClick={generateFromPrompt}><WandSparkles size={15} /> Generate</button>
     </section>
+    <StreamingPromptGuide prompt={nlpPrompt} catalog={allowedCatalog} />
     {nlpExplanation && <div className="report-ai-explanation"><Bot size={16} /><span><strong>Generated from your request</strong>{nlpExplanation}</span><button onClick={() => setNlpExplanation('')} aria-label="Dismiss AI explanation"><X size={14} /></button></div>}
 
     <div className="report-wizard-workspace">
@@ -163,6 +164,23 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
     {showShare && <ShareDialog reportName={definition.name} onClose={() => setShowShare(false)} onShare={(audience) => { onShareReport({ ...definition, fields: selectedTable.fields }, audience); setShowShare(false); setNotice(`Report saved and shared with ${audience}.`) }} />}
     {showSchedule && <ScheduleDialog reportName={definition.name} onClose={() => setShowSchedule(false)} onSchedule={() => { setShowSchedule(false); setNotice('Recurring delivery schedule saved.') }} />}
   </section>
+}
+
+function StreamingPromptGuide({ prompt, catalog }) {
+  const guide = useMemo(() => buildReportPromptGuide(prompt, catalog), [catalog, prompt])
+  const [visibleGuide, setVisibleGuide] = useState('')
+  useEffect(() => {
+    setVisibleGuide('')
+    let index = 0
+    const timer = window.setInterval(() => {
+      index += 4
+      setVisibleGuide(guide.slice(0, index))
+      if (index >= guide.length) window.clearInterval(timer)
+    }, 12)
+    return () => window.clearInterval(timer)
+  }, [guide])
+  const examples = catalog.slice(0, 4).map((table) => `List ${table.label.toLowerCase()} by ${table.fields[1]?.toLowerCase() || table.fields[0]?.toLowerCase()}`)
+  return <section className="report-prompt-guide" aria-live="polite"><Bot size={15} /><div><strong>Prompt coach</strong><p>{visibleGuide}<i /></p><span>{examples.map((example) => <code key={example}>{example}</code>)}</span></div></section>
 }
 
 function ReportLibrary({ reports, user, onNew, onOpen }) {

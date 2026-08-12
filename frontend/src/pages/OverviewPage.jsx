@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, GripVertical, LayoutDashboard, Plus, Send, Sparkles, Table2, TrendingUp, X } from 'lucide-react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
-import { createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog, runReportDefinition } from '../data/reportEngine'
+import { buildReportPromptGuide, createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog, runReportDefinition } from '../data/reportEngine'
 
 const ReactGridLayout = WidthProvider(GridLayout)
 const palette = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#6366f1', '#0d9488', '#ca8a04', '#be185d']
@@ -99,9 +99,26 @@ function NlpReportingPanel({ user, rowsBySource, productAssets, onOpenReport, pa
   return <section ref={panelRef} className="dashboard-nlp" aria-labelledby="dashboard-nlp-title">
     <header><span><Bot size={18} /></span><div><p>Natural language reporting</p><h2 id="dashboard-nlp-title">Ask about your operational data</h2><small>Generate a report from a plain-language question without changing your dashboard tiles.</small></div></header>
     <form onSubmit={runPrompt}><input aria-label="Reporting question" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="e.g. Show open critical incidents by customer" /><button type="submit" className="compact-button primary"><Send size={14} /> Generate</button></form>
+    <DashboardStreamingPromptGuide prompt={prompt} catalog={allowedCatalog} />
     <div className="dashboard-nlp-examples"><span>Try:</span>{['Open incidents by customer', 'Critical incidents by assignment group', 'Contracts by customer'].map((example) => <button key={example} type="button" onClick={() => setPrompt(example)}>{example}</button>)}</div>
     {generated && <div className="dashboard-nlp-result"><div><span><Sparkles size={15} /></span><section><strong>{generated.definition.name}</strong><p>{generated.explanation}</p></section></div><aside><b>{generated.result.rows.length}</b><small>matching records</small></aside>{generated.result.groups.length > 0 && <ul>{generated.result.groups.slice(0, 4).map((group) => <li key={group.label}><span>{group.label}</span><b>{group.value}</b></li>)}</ul>}<button type="button" className="compact-button secondary" onClick={() => onOpenReport?.(generated.definition)}><ExternalLink size={14} /> Open in Reporting</button></div>}
   </section>
+}
+
+function DashboardStreamingPromptGuide({ prompt, catalog }) {
+  const guide = useMemo(() => buildReportPromptGuide(prompt, catalog), [catalog, prompt])
+  const [visibleGuide, setVisibleGuide] = useState('')
+  useEffect(() => {
+    setVisibleGuide('')
+    let index = 0
+    const timer = window.setInterval(() => {
+      index += 5
+      setVisibleGuide(guide.slice(0, index))
+      if (index >= guide.length) window.clearInterval(timer)
+    }, 12)
+    return () => window.clearInterval(timer)
+  }, [guide])
+  return <div className="dashboard-nlp-guide" aria-live="polite"><Sparkles size={14} /><span>{visibleGuide}<i /></span></div>
 }
 
 function DashboardReport({ report, result, onOpen, onOpenGroup }) {

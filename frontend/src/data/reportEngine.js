@@ -6,6 +6,12 @@ export const reportCatalog = [
   { key: 'Knowledge', label: 'Knowledge records', description: 'Controlled documents, versions, approvals, and review status', roles: ['Administrator', 'Manager', 'Service engineer'], fields: ['Document code', 'Title', 'Category', 'Version', 'Status', 'Owner', 'Updated'] },
   { key: 'Users', label: 'Users', description: 'User access, roles, assignment groups, and authentication status', roles: ['Administrator'], fields: ['Name', 'Role', 'Assignment group', 'Status', 'Last login', 'Created'] },
   { key: 'Assignment groups', label: 'Assignment groups', description: 'Operational support teams, managers, and membership', roles: ['Administrator', 'Manager'], fields: ['Group name', 'Manager', 'Members', 'Status', 'Updated'] },
+  { key: 'Subcontracts', label: 'Subcontracts', description: 'AMC and CMC coverage, linked contracts, customers, and validity', roles: ['Administrator', 'Manager'], fields: ['Subcontract number', 'Customer', 'Main contract', 'Type', 'Status', 'Valid from', 'Valid to'] },
+  { key: 'Mail correspondence', label: 'Mail correspondence', description: 'Incoming and outgoing letters, ownership, priority, and due dates', roles: ['Administrator', 'Manager', 'Service engineer'], fields: ['Reference number', 'Dated', 'Subject', 'Priority', 'Assigned to', 'Label', 'Status', 'Due date'] },
+  { key: 'Calendar events', label: 'Calendar events', description: 'Operational events, notes, owners, and scheduled dates', roles: ['Administrator', 'Manager', 'Service engineer'], fields: ['Date', 'Note', 'Created by', 'Attachments'] },
+  { key: 'Repair executions', label: 'Repair executions', description: 'Configured repair execution paths and workflow ownership', roles: ['Administrator', 'Manager'], fields: ['Name', 'Description', 'Status'] },
+  { key: 'Process configurations', label: 'Process configurations', description: 'Repair workflow process definitions and configured stages', roles: ['Administrator'], fields: ['Process', 'Stage count', 'Status'] },
+  { key: 'Notifications', label: 'Notifications', description: 'Operational notifications, recipients, status, and creation time', roles: ['Administrator', 'Manager'], fields: ['Notification ID', 'Message', 'Recipient', 'Read status', 'Created'] },
 ]
 
 const productCategoryReportFields = ['Serial number', 'Contract number', 'Customer', 'Delivered on', 'Warranty / coverage', 'Warranty expiry', 'Warranty status', 'Last serviced', 'Service due', 'Service due period']
@@ -72,7 +78,7 @@ const serviceDueDate = (lastServiced) => {
   return date ? addDays(date, 90).toISOString().slice(0, 10) : ''
 }
 
-export const createReportRows = ({ customers, incidents, contracts, products, productAssets = [], knowledgeDocuments, users, assignmentGroups }) => ({
+export const createReportRows = ({ customers, incidents, contracts, products, productAssets = [], knowledgeDocuments, users, assignmentGroups, subcontracts = [], mailCorrespondence = [], calendarEvents = [], repairExecutions = [], processes = [], notifications = [] }) => ({
   Incidents: incidents.map((incident) => { const days = ageDays(incident.opened); return { Number: incident.id, 'Short description': incident.title, Customer: incident.customer || '--', Priority: incident.priority, State: incident.state, 'Assignment group': incident.group, Opened: incident.opened, 'Age days': days, 'Age bucket': ageBucket(days), Resolved: ['Resolved', 'Closed'].includes(incident.state) ? incident.opened : '--' } }),
   Customers: customers.map((customer) => ({ 'Customer name': customer.name, Service: customer.primaryContact?.designation || '--', 'Primary contact': customer.primaryContact?.name || '--', Site: customer.primaryContact?.site || '--', Status: 'Active', Created: customer.created || '--' })),
   Contracts: contracts.map((contract) => ({ 'Contract number': contract.number, Customer: contract.customer, 'Coverage type': contract.coverage?.join(', ') || 'No coverage', Status: contract.status, 'Start date': dateLabel(contract.signed), 'End date': dateLabel(contract.expiryDate) })),
@@ -94,6 +100,12 @@ export const createReportRows = ({ customers, incidents, contracts, products, pr
   Knowledge: knowledgeDocuments.map((document) => ({ 'Document code': document.code, Title: document.title, Category: document.type, Version: document.version, Status: document.status, Owner: document.owner, Updated: document.updated })),
   Users: users.map((member) => ({ Name: member.name, Role: member.role, 'Assignment group': member.groups, Status: member.status, 'Last login': member.lastLogin, Created: member.created })),
   'Assignment groups': assignmentGroups.map((group) => ({ 'Group name': group.name, Manager: group.manager, Members: String(group.members), Status: group.active ? 'Active' : 'Inactive', Updated: group.updated })),
+  Subcontracts: subcontracts.map((subcontract) => ({ 'Subcontract number': subcontract.number || subcontract.id, Customer: subcontract.customer || '--', 'Main contract': subcontract.mainContractNumber || '--', Type: subcontract.type || '--', Status: subcontract.status || '--', 'Valid from': dateLabel(subcontract.validFrom), 'Valid to': dateLabel(subcontract.validTo) })),
+  'Mail correspondence': mailCorrespondence.map((mail) => ({ 'Reference number': mail.mailReferenceNumber || '--', Dated: dateLabel(mail.dated), Subject: mail.subject || '--', Priority: mail.priority || '--', 'Assigned to': mail.assignedTo || 'Unassigned', Label: mail.label || '--', Status: mail.status || '--', 'Due date': dateLabel(mail.dueDate) })),
+  'Calendar events': calendarEvents.map((event) => ({ Date: dateLabel(event.date || event.createdDate), Note: event.note || '--', 'Created by': event.createdBy || '--', Attachments: String(event.attachments?.length || 0) })),
+  'Repair executions': repairExecutions.map((execution) => ({ Name: execution.name || execution.id || '--', Description: execution.description || '--', Status: execution.active === false ? 'Inactive' : 'Active' })),
+  'Process configurations': processes.map((process) => ({ Process: process.name || process.repairExecution || process.id || '--', 'Stage count': String(process.stages?.length || 0), Status: process.active === false ? 'Inactive' : 'Active' })),
+  Notifications: notifications.map((notification) => ({ 'Notification ID': notification.id || '--', Message: notification.message || notification.title || '--', Recipient: notification.recipientName || notification.recipientUserId || '--', 'Read status': notification.read ? 'Read' : 'Unread', Created: dateLabel(notification.createdAt || notification.created) })),
 })
 
 export const matchesReportFilter = (row, filter) => {
@@ -139,7 +151,18 @@ export const runReportDefinition = (definition, rowsBySource) => {
   return { rows, groups }
 }
 
-const sourceFromPrompt = (phrase) => {
+const sourceFromPrompt = (phrase, allowedCatalog) => {
+  const requestedTable = [...allowedCatalog].sort((left, right) => right.key.length - left.key.length).find((table) => {
+    const aliases = [table.key, table.label, table.key.replaceAll(' ', ''), table.label.replaceAll(' ', '')]
+    return aliases.some((alias) => new RegExp(`\\b${alias.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(phrase))
+  })
+  if (requestedTable) return requestedTable.key
+  if (/(mail|letter|correspondence)/.test(phrase)) return 'Mail correspondence'
+  if (/(calendar|event|meeting|reminder)/.test(phrase)) return 'Calendar events'
+  if (/(subcontract|sub-contract|amc|cmc)/.test(phrase)) return 'Subcontracts'
+  if (/(repair execution|repair process)/.test(phrase)) return 'Repair executions'
+  if (/(process configuration|workflow stage|workflow)/.test(phrase)) return 'Process configurations'
+  if (/(notification|alert)/.test(phrase)) return 'Notifications'
   if (/(assignment group|support group|team roster|team membership)/.test(phrase)) return 'Assignment groups'
   if (/(user|login|employee|role)/.test(phrase)) return 'Users'
   if (/(knowledge|manual|bulletin|document|article)/.test(phrase)) return 'Knowledge'
@@ -149,6 +172,24 @@ const sourceFromPrompt = (phrase) => {
   return 'Incidents'
 }
 
+const fieldFromPhrase = (phrase, fields) => fields.find((field) => phrase.includes(field.toLowerCase()))
+const groupFieldsFromPhrase = (phrase, fields) => {
+  const requested = fields.filter((field) => new RegExp(`\\bby\\s+${field.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(phrase))
+  if (requested.length) return requested.slice(0, 2)
+  const afterBy = phrase.match(/\bby\s+(.+?)(?:\s+as\s+|\s+(?:bar|chart|list|table|trend|donut|pie)|$)/)?.[1] || ''
+  return fields.filter((field) => afterBy.includes(field.toLowerCase())).slice(0, 2)
+}
+
+export const buildReportPromptGuide = (prompt, allowedCatalog) => {
+  const phrase = prompt.trim().toLowerCase()
+  const sourceKey = sourceFromPrompt(phrase, allowedCatalog)
+  const table = allowedCatalog.find((item) => item.key === sourceKey) || allowedCatalog[0]
+  if (!table) return 'Select a data table, then describe the records, grouping, and output format.'
+  const suggestedField = table.fields.find((field) => !/number|id|description|note|message/i.test(field)) || table.fields[0]
+  const promptPrefix = phrase ? `Using ${table.label}. ` : ''
+  return `${promptPrefix}Try: "List ${table.label.toLowerCase()} by ${suggestedField.toLowerCase()}". Add a condition such as "where status is Draft" and an output such as "as a bar chart". Available fields: ${table.fields.join(', ')}.`
+}
+
 export const createBlankReport = (allowedCatalog) => {
   const table = allowedCatalog[0]
   return { name: 'Untitled report', source: table?.key || '', filters: [], visualization: 'table', fields: table?.fields || [], selectedFields: table?.fields.slice(0, 5) || [], groupBy: [], sortBy: '', sortDirection: 'descending', style: { showLegend: true, showValues: true, palette: 'operational' } }
@@ -156,7 +197,7 @@ export const createBlankReport = (allowedCatalog) => {
 
 export const parseReportPrompt = (prompt, allowedCatalog) => {
   const phrase = prompt.trim().toLowerCase()
-  const requestedSource = sourceFromPrompt(phrase)
+  const requestedSource = sourceFromPrompt(phrase, allowedCatalog)
   const table = allowedCatalog.find((item) => item.key === requestedSource) || allowedCatalog[0]
   const filters = []
   const addFilter = (field, operator, value) => filters.push({ id: `nlp-${field}-${filters.length}`, field, operator, value })
@@ -187,6 +228,17 @@ export const parseReportPrompt = (prompt, allowedCatalog) => {
     else if (/priority/.test(phrase)) groupBy = ['Priority']
     else if (/state|status/.test(phrase)) groupBy = ['State']
     else if (/assignment|group|team/.test(phrase)) groupBy = ['Assignment group']
+  }
+  if (table.key !== 'Incidents') {
+    const statusField = table.fields.find((field) => field.toLowerCase() === 'status')
+    const requestedStatus = ['draft', 'published', 'active', 'inactive', 'pending', 'completed', 'unread', 'read'].find((status) => new RegExp(`\\b${status}\\b`).test(phrase))
+    if (statusField && requestedStatus) addFilter(statusField, 'is', requestedStatus[0].toUpperCase() + requestedStatus.slice(1))
+    const groupedFields = groupFieldsFromPhrase(phrase, table.fields)
+    if (groupedFields.length) groupBy = groupedFields
+    else {
+      const directField = fieldFromPhrase(phrase, table.fields)
+      if (directField && /by|group/.test(phrase)) groupBy = [directField]
+    }
   }
   if (!groupBy.length && visualization !== 'table') groupBy = [table.fields[1]]
   const subject = table.key === 'Incidents' ? 'Incidents' : table.label

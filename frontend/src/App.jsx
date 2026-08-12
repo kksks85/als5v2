@@ -1,3 +1,4 @@
+const sessionContextStorageKey = 'als50-session-context'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, Bell, BookOpen, Building2, CalendarDays, ChevronDown, ChevronRight, CircleHelp,
@@ -51,6 +52,11 @@ const workspaceNav = [
   { key: 'Approval center', label: 'Approval center', icon: ShieldCheck },
 ]
 
+const standardWorkspaceKeys = new Set([
+  'Overview', 'Incidents', 'Inventory Master', 'Product categories',
+  'Knowledge management', 'Reporting', 'Approval center',
+])
+
 const configNav = [
   { key: 'Authentication settings', label: 'Authentication settings', icon: Shield },
   { key: 'User management', label: 'User management', icon: Users },
@@ -96,6 +102,17 @@ const contractSystemByNumber = {
   'TASL-CTR-2026-004': 'SRLM - SF',
 }
 const normalizeContractSystem = (contract) => ({ ...contract, system: contractSystemByNumber[contract.number] || contract.system || '' })
+const readStoredSessionContext = () => {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(sessionContextStorageKey) || 'null')
+    if (!stored?.authenticatedUser?.session?.access_token || !stored?.user?.email) return null
+    return stored
+  } catch {
+    sessionStorage.removeItem(sessionContextStorageKey)
+    return null
+  }
+}
+const persistSessionContext = (authenticatedUser, user) => sessionStorage.setItem(sessionContextStorageKey, JSON.stringify({ authenticatedUser, user }))
 const normalizeCategoryComponents = (records, category) => records.map((record) => ({
   ...record,
   product_category: category,
@@ -387,7 +404,7 @@ const defaultReports = [
   },
 ]
 
-function Dashboard({ user, onLogout }) {
+function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpersonate, onStopImpersonating }) {
   const dashboardStorageKey = `als50-dashboard-${user.email}`
   const [activePage, setActivePage] = useState('Overview')
   const [reportingVisit, setReportingVisit] = useState(0)
@@ -396,6 +413,7 @@ function Dashboard({ user, onLogout }) {
   const [incidentDrill, setIncidentDrill] = useState(null)
   const [productAssetDrill, setProductAssetDrill] = useState(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const [inventoryMasterNavigationOpen, setInventoryMasterNavigationOpen] = useState(true)
   const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(true)
@@ -431,6 +449,21 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationToasts, setNotificationToasts] = useState([])
+    useEffect(() => {
+      const openIncidentFromUrl = () => {
+        const incidentId = new URLSearchParams(window.location.search).get('incidentId')
+        if (!incidentId) return
+        setIncidentDrill((current) => current?.selectedIncidentId === incidentId ? current : {
+          incidentIds: [incidentId],
+          selectedIncidentId: incidentId,
+          navigationId: Date.now(),
+        })
+        setActivePage('Incidents')
+      }
+      openIncidentFromUrl()
+      window.addEventListener('popstate', openIncidentFromUrl)
+      return () => window.removeEventListener('popstate', openIncidentFromUrl)
+    }, [])
   const seenNotificationIds = useRef(new Set())
   const notificationsInitialized = useRef(false)
   const [persistenceReady, setPersistenceReady] = useState(false)
@@ -811,9 +844,10 @@ function Dashboard({ user, onLogout }) {
   const addReportToDashboard = (reportId) => setDashboardLayout((current) => current.some((item) => item.i === reportId) ? current : [...current, { i: reportId, x: 0, y: Infinity, w: 6, h: 4, minW: 3, minH: 3 }])
   const removeReportFromDashboard = (reportId) => setDashboardLayout((current) => current.filter((item) => item.i !== reportId))
 
-  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, notifications }
+  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, subcontracts, mailCorrespondence, calendarEvents, repairExecutions, processes, notifications }
   const productCategories = getProductCategories(categoryProducts)
   const currentUserRecord = users.find((member) => member.email === user.email) || user
+  const isAdministrator = String(currentUserRecord.role || user.role || '').toLowerCase() === 'administrator'
   const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
   const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
   const resolveGroupApproval = async (incidentId, decision, reason) => {
@@ -882,6 +916,8 @@ function Dashboard({ user, onLogout }) {
   const currentUserGroupNames = assignmentGroups
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
     .map((group) => group.name)
+  const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
+  const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
   const visibleIncidentCount = incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group)).length
   useEffect(() => {
     if (!persistenceReady) return
@@ -893,9 +929,13 @@ function Dashboard({ user, onLogout }) {
     }
     if (!nextNotifications.length) return
     setNotificationToasts((current) => sortNotificationsNewestFirst([...current, ...nextNotifications]))
-    const timer = window.setTimeout(() => setNotificationToasts((current) => current.filter((notification) => !nextNotifications.some((next) => next.id === notification.id))), 6000)
-    return () => window.clearTimeout(timer)
   }, [currentUserRecord.id, notifications, persistenceReady])
+
+  useEffect(() => {
+    if (!notificationToasts.length) return undefined
+    const timer = window.setTimeout(() => setNotificationToasts([]), 3000)
+    return () => window.clearTimeout(timer)
+  }, [notificationToasts])
 
   const toggleNotifications = () => setNotificationsOpen((open) => !open)
   const openNotification = (notification) => {
@@ -911,7 +951,7 @@ function Dashboard({ user, onLogout }) {
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
-      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
+      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
       case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
@@ -922,18 +962,18 @@ function Dashboard({ user, onLogout }) {
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
       case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
-      case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} />
-      case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} />
-      case 'Product master GDT': return <ProductMasterGdtPage records={gdtProducts} setRecords={setGdtProducts} />
-      case 'Product master MAST': return <ProductMasterGdtPage records={mastProducts} setRecords={setMastProducts} masterName="MAST" idPrefix="mast" />
-      case 'Product master Simulator': return <ProductMasterGdtPage records={simulatorProducts} setRecords={setSimulatorProducts} masterName="Simulator" idPrefix="simulator" columns={simulatorProductColumns} />
-      case 'Product master TMV': return <ProductMasterGdtPage records={tmvProducts} setRecords={setTmvProducts} masterName="TMV" idPrefix="tmv" columns={tmvProductColumns} />
-      case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
-      case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
-      case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
-      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
-      case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
-      case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
+      case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
+      case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
+      case 'Product master GDT': return <ProductMasterGdtPage records={gdtProducts} setRecords={setGdtProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
+      case 'Product master MAST': return <ProductMasterGdtPage records={mastProducts} setRecords={setMastProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MAST" idPrefix="mast" />
+      case 'Product master Simulator': return <ProductMasterGdtPage records={simulatorProducts} setRecords={setSimulatorProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Simulator" idPrefix="simulator" columns={simulatorProductColumns} />
+      case 'Product master TMV': return <ProductMasterGdtPage records={tmvProducts} setRecords={setTmvProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="TMV" idPrefix="tmv" columns={tmvProductColumns} />
+      case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
+      case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
+      case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+      case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
+      case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
       case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} />
       case 'Mail correspondence': return <MailCorrespondencePage correspondence={mailCorrespondence} setCorrespondence={setMailCorrespondence} users={users} currentUser={user} />
       case 'My Calendar': return <MyCalendarPage
@@ -967,7 +1007,7 @@ function Dashboard({ user, onLogout }) {
 
         <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
-          {workspaceNav.filter(({ csmOnly }) => !csmOnly || currentUserGroupNames.includes('Customer Support Management Group')).map(({ key, label, icon: Icon, count }) => {
+          {workspaceNav.filter(({ key }) => hasFullWorkspaceAccess || standardWorkspaceKeys.has(key)).map(({ key, label, icon: Icon, count }) => {
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
             if (key === 'Incidents') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
@@ -992,12 +1032,14 @@ function Dashboard({ user, onLogout }) {
             )
           })}
 
-          <p className="nav-label config-label">Administration</p>
-          {configNav.map(({ key, label, icon: Icon }) => (
-            <button key={key} className={`nav-item ${activePage === key ? 'active' : ''}`} onClick={() => { setActivePage(key); setMobileNavigationOpen(false) }}>
-              <Icon size={18} /><span>{label}</span>
-            </button>
-          ))}
+          {isAdministrator && <>
+            <p className="nav-label config-label">Administration</p>
+            {configNav.map(({ key, label, icon: Icon }) => (
+              <button key={key} className={`nav-item ${activePage === key ? 'active' : ''}`} onClick={() => { setActivePage(key); setMobileNavigationOpen(false) }}>
+                <Icon size={18} /><span>{label}</span>
+              </button>
+            ))}
+          </>}
         </nav>
 
         <div className="sidebar-foot">
@@ -1020,11 +1062,11 @@ function Dashboard({ user, onLogout }) {
             </label>}
             <button className="icon-button" aria-label="Search" onClick={() => setSearchOpen(!searchOpen)}><Search size={19} /></button>
             <div className="notification-menu"><button className="icon-button notification" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={toggleNotifications}><Bell size={19} />{unreadNotifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><header><strong>Notifications</strong><span>{unreadNotifications.length}</span></header>{notificationsForCurrentUser.length ? <ul>{notificationsForCurrentUser.map((notification) => <li key={notification.id} className={notification.recipientUserId && !notification.readByUserIds?.includes(currentUserRecord.id) ? 'unread' : ''}><button type="button" onClick={() => openNotification(notification)}><strong>{notification.title}</strong><span>{notification.incidentId ? notification.incidentId : `${notification.contractNumber} · ${notification.customer}`}</span><small>{notification.workNotes || `Expired ${notification.expiryDate} · ${notification.recipientGroup}`}</small></button></li>)}</ul> : <p>No notifications.</p>}</div>}</div>
-            <button className="profile" onClick={onLogout} title="Sign out">
+            <div className="profile-menu"><button className="profile" onClick={() => setProfileMenuOpen((open) => !open)} aria-label="Open account menu" aria-expanded={profileMenuOpen}>
               <span>{user.initials}</span>
-              <div><strong>{user.name}</strong><small>{user.role}</small></div>
+              <div><strong>{user.name}</strong><small>{impersonatingUser ? `Impersonating · ${user.role}` : user.role}</small></div>
               <ChevronDown size={16} />
-            </button>
+            </button>{profileMenuOpen && <div className="profile-popover"><header><strong>{user.name}</strong><span>{user.email}</span></header>{canImpersonate && <><div className="profile-menu-section"><span>Impersonate user</span>{users.filter((member) => member.status === 'Active' && member.email !== user.email).map((member) => <button type="button" key={member.id} onClick={() => { onImpersonate(member); setProfileMenuOpen(false) }}><Users size={15} /><span>{member.name}</span><small>{member.role}</small></button>)}</div>{impersonatingUser && <button type="button" className="profile-menu-return" onClick={() => { onStopImpersonating(); setProfileMenuOpen(false) }}>Return to administrator</button>}</>}<button type="button" className="profile-menu-signout" onClick={onLogout}>Sign out</button></div>}</div>
           </div>
         </header>
         <section className="content">
@@ -1095,7 +1137,13 @@ function DatabaseColumnInspector() {
    Root App
    ────────────────────────────────────────── */
 export default function App() {
-  const [user, setUser] = useState(null)
+  const [restoredSession] = useState(() => {
+    const session = readStoredSessionContext()
+    authenticationApi.restoreSession(session?.authenticatedUser?.session)
+    return session
+  })
+  const [user, setUser] = useState(() => restoredSession?.user || null)
+  const [authenticatedUser, setAuthenticatedUser] = useState(() => restoredSession?.authenticatedUser || null)
   const [loginUsers, setLoginUsers] = useState([])
   const [loginAssignmentGroups, setLoginAssignmentGroups] = useState([])
   const [loginDirectoryReady, setLoginDirectoryReady] = useState(false)
@@ -1111,6 +1159,25 @@ export default function App() {
       .catch((error) => console.warn('Unable to load demo login identities.', error))
     return () => { active = false }
   }, [])
-  if (!user) return <><LoginPage onLogin={setUser} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} /><DatabaseColumnInspector /></>
-  return <><Dashboard user={user} onLogout={() => setUser(null)} /><DatabaseColumnInspector /></>
+  const login = (nextUser) => { setAuthenticatedUser(nextUser); setUser(nextUser); persistSessionContext(nextUser, nextUser) }
+  const logout = () => {
+    sessionStorage.removeItem(sessionContextStorageKey)
+    authenticationApi.logout().catch(() => authenticationApi.clearSession())
+    setUser(null)
+    setAuthenticatedUser(null)
+  }
+  const impersonate = (nextUser) => {
+    const nextActiveUser = { ...nextUser, session: authenticatedUser?.session }
+    setUser(nextActiveUser)
+    persistSessionContext(authenticatedUser, nextActiveUser)
+  }
+  const stopImpersonating = () => {
+    setUser(authenticatedUser)
+    persistSessionContext(authenticatedUser, authenticatedUser)
+  }
+  const canImpersonate = String(authenticatedUser?.role || '').toLowerCase() === 'administrator'
+  const impersonatingUser = Boolean(authenticatedUser && user && authenticatedUser.email !== user.email)
+  if (!user) return <><LoginPage onLogin={login} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} /><DatabaseColumnInspector /></>
+  return <><Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={(nextUser) => setUser({ ...nextUser, session: authenticatedUser?.session })} onStopImpersonating={() => setUser(authenticatedUser)} /><DatabaseColumnInspector /></>
+  return <><Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} /><DatabaseColumnInspector /></>
 }

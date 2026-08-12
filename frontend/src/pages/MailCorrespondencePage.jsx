@@ -19,6 +19,46 @@ const blankMail = (user) => ({ id: '', mailReferenceNumber: '', dated: new Date(
 const normalise = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const displayDate = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-GB') : '--'
 const cleanLetterText = (value) => String(value ?? '').replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+const referenceNumberPattern = /\b[A-Z0-9]{2,}(?:\s*\/\s*[A-Z0-9()._-]{1,}){2,}\s*\/?/i
+const airHqReferencePattern = /\bAIR\s*H?Q\s*(?:\/\s*)?S\s*(\d{4,})\s*\/\s*([A-Z0-9]+)\s*\/\s*([A-Z]{2,})\b/i
+
+const normalizeReferenceNumber = (value) => String(value || '').replace(/\s*\/\s*/g, '/').replace(/\s+/g, '').replace(/[.,;:]+$/, '').replace(/\/$/, '')
+const extractReferenceNumber = (value) => {
+  const text = String(value || '')
+  const airHqMatch = text.match(airHqReferencePattern)
+  if (airHqMatch) return `AIRHQ/S ${airHqMatch[1]}/${airHqMatch[2].toUpperCase()}/${airHqMatch[3].toUpperCase()}`
+  const candidates = [...text.matchAll(new RegExp(referenceNumberPattern.source, 'gi'))].map((match) => match[0])
+  const bestCandidate = candidates.sort((first, second) => {
+    const score = (candidate) => (candidate.match(/\//g) || []).length * 10 + (candidate.match(/\d/g) || []).length - (/fax|hard|harid/i.test(candidate) ? 100 : 0)
+    return score(second) - score(first)
+  })[0]
+  return normalizeReferenceNumber(bestCandidate)
+}
+const isReliableReferenceNumber = (value) => Boolean(value) && !/\b(?:fax|hard|harid)\b/i.test(value) && (value.match(/\//g) || []).length >= 2
+const normalizeLetterDate = (value) => {
+  const parsed = String(value || '').trim().replace(/,/g, ' ')
+  const numeric = parsed.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/)
+  if (numeric) {
+    const [, day, month, rawYear] = numeric
+    const year = rawYear.length === 2 ? `20${rawYear}` : rawYear
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+  const named = Date.parse(parsed)
+  return Number.isNaN(named) ? '' : new Date(named).toISOString().slice(0, 10)
+}
+const dateFromFileName = (fileName) => normalizeLetterDate(String(fileName || '').match(/(?:dated?|dtd)\s*[-_. ]*([0-3]?\d\s*[A-Za-z]{3,9}\s*\d{2,4}|[0-3]?\d[-_. ][0-1]?\d[-_. ]\d{2,4})/i)?.[1])
+const preprocessForOcr = (canvas) => {
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  const image = context.getImageData(0, 0, canvas.width, canvas.height)
+  for (let index = 0; index < image.data.length; index += 4) {
+    const luminance = image.data[index] * 0.299 + image.data[index + 1] * 0.587 + image.data[index + 2] * 0.114
+    const value = luminance > 172 ? 255 : 0
+    image.data[index] = value
+    image.data[index + 1] = value
+    image.data[index + 2] = value
+  }
+  context.putImageData(image, 0, 0)
+}
 
 const readAttachment = (file) => new Promise((resolve) => {
   const reader = new FileReader()
@@ -31,18 +71,43 @@ const extractScannedPdfText = async (pdfDocument, onProgress) => {
     logger: ({ status, progress }) => onProgress?.(`OCR: ${status}${progress ? ` (${Math.round(progress * 100)}%)` : ''}`),
   })
   try {
+    await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' })
     const pages = []
+    const headerZones = []
     for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      onProgress?.(`OCR reading page ${pageNumber} of ${pdfDocument.numPages}...`)
       const page = await pdfDocument.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: 2 })
+      const viewport = page.getViewport({ scale: 4 })
       const canvas = document.createElement('canvas')
       canvas.width = Math.ceil(viewport.width)
       canvas.height = Math.ceil(viewport.height)
       await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-      const result = await worker.recognize(canvas.toDataURL('image/png'))
-      pages.push(result.data.text)
+      preprocessForOcr(canvas)
+      const bodyResult = await worker.recognize(canvas.toDataURL('image/png'))
+      const headerTop = Math.floor(canvas.height * 0.24)
+      const headerHeight = Math.ceil(canvas.height * 0.16)
+      const referenceZone = document.createElement('canvas')
+      referenceZone.width = Math.ceil(canvas.width * 0.58)
+      referenceZone.height = headerHeight
+      referenceZone.getContext('2d').drawImage(canvas, 0, headerTop, referenceZone.width, headerHeight, 0, 0, referenceZone.width, headerHeight)
+      const dateZone = document.createElement('canvas')
+      dateZone.width = Math.ceil(canvas.width * 0.4)
+      dateZone.height = headerHeight
+      dateZone.getContext('2d').drawImage(canvas, Math.floor(canvas.width * 0.6), headerTop, dateZone.width, headerHeight, 0, 0, dateZone.width, headerHeight)
+      await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' })
+      const referenceResult = await worker.recognize(referenceZone.toDataURL('image/png'))
+      const dateResult = await worker.recognize(dateZone.toDataURL('image/png'))
+      headerZones.push(`Reference zone: ${cleanLetterText(referenceResult.data.text)}\nDate zone: ${cleanLetterText(dateResult.data.text)}`)
+      const header = document.createElement('canvas')
+      header.width = canvas.width
+      header.height = Math.ceil(canvas.height * 0.38)
+      header.getContext('2d').drawImage(canvas, 0, 0, canvas.width, header.height, 0, 0, header.width, header.height)
+      await worker.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' })
+      const headerResult = await worker.recognize(header.toDataURL('image/png'))
+      await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' })
+      pages.push(`Reference: ${referenceResult.data.text}\nDated: ${dateResult.data.text}\n${headerResult.data.text}\n${bodyResult.data.text}`)
     }
-    return cleanLetterText(pages.join('\n'))
+    return { text: cleanLetterText(pages.join('\n')), headerText: cleanLetterText(headerZones.join('\n')) }
   } finally {
     await worker.terminate()
   }
@@ -57,28 +122,49 @@ const extractAttachmentText = async (file, onProgress) => {
       return content.items.map((item) => item.str).join(' ')
     }))
     const embeddedText = cleanLetterText(pages.join('\n'))
-    return embeddedText || extractScannedPdfText(pdfDocument, onProgress)
+    const scannedText = await extractScannedPdfText(pdfDocument, onProgress)
+    return { text: cleanLetterText([scannedText.text, embeddedText].filter(Boolean).join('\n')), headerText: scannedText.headerText }
   }
-  if (file.type.startsWith('text/') || /\.(txt|csv|html?|eml)$/i.test(file.name)) return cleanLetterText(await file.text())
-  return ''
+  if (file.type.startsWith('text/') || /\.(txt|csv|html?|eml)$/i.test(file.name)) return { text: cleanLetterText(await file.text()), headerText: '' }
+  return { text: '', headerText: '' }
 }
 
-const deriveMailFields = (text) => {
-  const lines = cleanLetterText(text).split('\n').map((line) => line.trim()).filter(Boolean)
-  const referenceMatch = text.match(/(?:reference|ref\.?\s*(?:no\.?|number)?|letter\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/()._-]{3,})/i)
+const deriveMailFields = (text, fileName = '') => {
+  const fullText = cleanLetterText(text)
+  const lines = fullText.split('\n').map((line) => line.trim()).filter(Boolean)
+  const referenceMatch = fullText.match(/(?:reference|ref\.?\s*(?:no\.?|number)?|letter\s*no\.?)\s*[:#-]?\s*([^\n]{3,100})/i)
+  const datedMatch = fullText.match(/\bdated\s*[:.-]?\s*([^\n]{4,40})/i)
+  const headerDateMatch = fullText.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4})\b/i)
+  const dated = dateFromFileName(fileName) || normalizeLetterDate(headerDateMatch?.[1]) || normalizeLetterDate(datedMatch?.[1]?.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}/)?.[0])
   const subjectLine = lines.find((line) => /^(?:subject|sub|re)\s*[:.-]/i.test(line)) || ''
   const inlineSubject = text.match(/(?:subject|sub|re)\s*[:.-]\s*(.+?)(?=\s+(?:dear|to whom|regards|sincerely|yours faithfully)\b|$)/i)?.[1]?.trim() || ''
   const subject = subjectLine.replace(/^(?:subject|sub|re)\s*[:.-]\s*/i, '').trim() || inlineSubject || lines.find((line) => line.length > 20 && !/^(?:date|from|to|dear|reference|ref)/i.test(line)) || ''
-  const letterBody = (text.match(/(?:dear\s+(?:sir|madam)[^,]*,?|to whom it may concern[:,]?)\s*([\s\S]+)/i)?.[1] || text)
+  const letterBody = (fullText.match(/(?:dear\s+(?:sir|madam)[^,]*,?|to whom it may concern[:,]?)\s*([\s\S]+)/i)?.[1] || fullText)
     .replace(/\s+(?:yours faithfully|sincerely|regards)[\s\S]*$/i, '')
     .replace(/\s+/g, ' ')
     .trim()
   const sentences = letterBody.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) || []
   const actionSentence = letterBody.match(/(?:you are requested|kindly|please|we request)\b[\s\S]*?(?=[.!?](?:\s|$)|$)/i)?.[0]?.trim()
     || sentences.find((sentence) => /\b(?:requested|request|kindly|please|submit|provide|respond|complete)\b/i.test(sentence))
-  const summaryText = [sentences[0], actionSentence].filter((sentence, index, values) => sentence && values.indexOf(sentence) === index).join(' ').slice(0, 420)
-  const reference = referenceMatch?.[1] || ''
-  return { reference, subject: subject.slice(0, 240), summary: `${reference ? `Reference: ${reference}\n\n` : ''}${summaryText}`.trim() }
+  const readableSentences = sentences.filter((sentence) => {
+    const letters = (sentence.match(/[A-Za-z]/g) || []).length
+    const noise = (sentence.match(/[^A-Za-z0-9 ,.'()&/:;-]/g) || []).length
+    const words = sentence.split(/\s+/).filter((word) => /^[A-Za-z][A-Za-z'-]*$/.test(word))
+    return letters >= 30 && words.length >= 6 && noise <= Math.max(3, letters * 0.04)
+  })
+  const cleanActionSentence = actionSentence && readableSentences.includes(actionSentence) ? actionSentence : ''
+  const summarySentences = [...readableSentences.slice(0, 2), cleanActionSentence].filter((sentence, index, values) => sentence && values.indexOf(sentence) === index)
+  const summaryText = summarySentences.join(' ').slice(0, 700)
+  const reference = extractReferenceNumber(`${referenceMatch?.[1] || ''}\n${fullText}`)
+  const cleanSubject = subject.slice(0, 240)
+  const fallbackSummary = cleanSubject ? `Correspondence regarding: ${cleanSubject}. Review the attached letter and complete the required action.` : 'Review the attached letter and complete the required action.'
+  return {
+    reference,
+    dated,
+    subject: cleanSubject,
+    summary: `${reference ? `Reference: ${reference}\n` : ''}${dated ? `Dated: ${dated}\n` : ''}${summaryText || fallbackSummary}`.trim(),
+    needsReferenceReview: !isReliableReferenceNumber(reference),
+  }
 }
 
 export default function MailCorrespondencePage({ correspondence, setCorrespondence, users, currentUser }) {
@@ -157,8 +243,8 @@ function AttachmentAwareMailForm({ record, users, onCancel, onSave }) {
         const [attachment, extraction] = await Promise.all([
           readAttachment(file),
           extractAttachmentText(file, setReadMessage)
-            .then((extractedText) => ({ extractedText }))
-            .catch((error) => ({ extractedText: '', extractionError: error?.message || 'The PDF reader could not open this file.' })),
+            .then(({ text: extractedText, headerText: ocrHeaderText }) => ({ extractedText, ocrHeaderText }))
+            .catch((error) => ({ extractedText: '', ocrHeaderText: '', extractionError: error?.message || 'The PDF reader could not open this file.' })),
         ])
         return { ...attachment, ...extraction }
       }))
@@ -170,19 +256,23 @@ function AttachmentAwareMailForm({ record, users, onCancel, onSave }) {
     }
   }
   const fillMailFields = () => {
-    const text = form.attachments?.map((attachment) => attachment.extractedText || '').find(Boolean)
-    if (!text) {
+    const sourceAttachment = form.attachments?.find((attachment) => attachment.extractedText)
+    if (!sourceAttachment) {
       setReadMessage('No readable text was found in the attached files. Use a text-based PDF, email, or text file.')
       return
     }
-    const fields = deriveMailFields(text)
+    const fields = deriveMailFields(sourceAttachment.extractedText, sourceAttachment.name)
     setForm((current) => ({
       ...current,
-      mailReferenceNumber: fields.reference || current.mailReferenceNumber,
+      mailReferenceNumber: isReliableReferenceNumber(fields.reference) ? fields.reference : current.mailReferenceNumber,
+      dated: fields.dated || current.dated,
       subject: fields.subject || current.subject,
+      extractedLetterContent: sourceAttachment.extractedText,
       mailSummary: fields.summary ? `${fields.summary}\n\n${(current.attachments || []).map((attachment) => `Enclosure : ${attachment.name}`).join('\n')}` : current.mailSummary,
     }))
-    setReadMessage('Mail Reference Number, Subject Line, and Body of the email were filled from the attachment.')
+    setReadMessage(fields.needsReferenceReview
+      ? 'OCR could not verify a reliable mail reference, so no reference was inserted. Review and enter the reference from the original letter before saving.'
+      : 'Mail Reference Number, Dated, Subject Line, and full-letter summary were filled from the attachment.')
   }
   const selectBucket = (value) => {
     if (value === '__custom__') {
@@ -202,7 +292,7 @@ function AttachmentAwareMailForm({ record, users, onCancel, onSave }) {
       <input ref={fileInput} type="file" multiple hidden onChange={(event) => addAttachments(event.target.files)} />
       <button type="button" className="compact-button secondary" disabled={isReadingAttachment} onClick={() => fileInput.current?.click()}><Paperclip size={15} /> Add files</button>
       <button type="button" className="compact-button primary" disabled={isReadingAttachment || !form.attachments?.some((attachment) => attachment.extractedText)} onClick={fillMailFields}><FileSpreadsheet size={15} /> Read and fill mail fields</button>
-      {form.attachments?.map((attachment) => <div className="mail-file" key={attachment.id}><span>{attachment.name}</span><button type="button" onClick={() => setForm((current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== attachment.id) }))} aria-label={`Remove ${attachment.name}`}><X size={14} /></button></div>)}
+      {form.attachments?.map((attachment) => <div className="mail-file" key={attachment.id}><span>{attachment.name}</span><button type="button" onClick={() => setForm((current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== attachment.id) }))} aria-label={`Remove ${attachment.name}`}><X size={14} /></button>{attachment.ocrHeaderText && <small className="mail-ocr-review">Local OCR header review: {attachment.ocrHeaderText.replace(/\n/g, ' | ')}</small>}</div>)}
     </section>
     <section className="mail-form-sheet">
       <label>Mail reference number *<input value={form.mailReferenceNumber} onChange={(event) => update('mailReferenceNumber', event.target.value)} required /></label>
@@ -228,8 +318,8 @@ export function LegacyMailForm({ record, users, onCancel, onSave }) {
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const addAttachments = async (files) => {
     const prepared = await Promise.all(Array.from(files).map(async (file) => {
-      const [attachment, text] = await Promise.all([readAttachment(file), extractAttachmentText(file).catch(() => '')])
-      return { attachment, text }
+      const [attachment, extraction] = await Promise.all([readAttachment(file), extractAttachmentText(file).catch(() => ({ text: '', headerText: '' }))])
+      return { attachment, text: extraction.text }
     }))
     const extracted = prepared.map((item) => item.text).find(Boolean)
     const fields = extracted ? deriveMailFields(extracted) : null
