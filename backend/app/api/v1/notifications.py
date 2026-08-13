@@ -152,6 +152,9 @@ def current_notification_recipients(notification: IncidentRegistrationEmail, dat
         emails = user_emails(group_members(selected_groups))
     elif recipient_type == "assignment_group":
         emails = user_emails(group_members([group for group in groups if group.get("name") == incident.get("assignmentGroup")]))
+    elif recipient_type == "approval_assignment_group":
+        approval_group = (incident.get("groupApproval") or {}).get("assignmentGroup")
+        emails = user_emails(group_members([group for group in groups if group.get("name") == approval_group]))
     elif recipient_type == "specific_user":
         emails = user_emails(selected_users)
     elif recipient_type == "custom_recipients":

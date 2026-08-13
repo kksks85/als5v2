@@ -183,6 +183,8 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
             normalized["status"] = "Registered" if normalized.get("stage") in {None, "", "Triage"} else normalized["stage"]
         if normalized.get("stage") in {None, "", "Triage"}:
             normalized["stage"] = normalized["status"]
+        if normalized.get("priority") == "Critical (AOG)":
+            normalized["priority"] = "Critical"
         return normalized
     statement = insert(model).values([
         {"record_id": record.record_id, "payload": normalize_payload(record.payload), "updated_at": now}

@@ -210,7 +210,7 @@ export const parseReportPrompt = (prompt, allowedCatalog) => {
     else if (/resolved/.test(phrase)) addFilter('State', 'is', 'Resolved')
     else if (/in progress/.test(phrase)) addFilter('State', 'is', 'In progress')
     else if (/new incident/.test(phrase)) addFilter('State', 'is', 'New')
-    if (/critical|aog/.test(phrase)) addFilter('Priority', 'is', 'Critical')
+    if (/critical/.test(phrase)) addFilter('Priority', 'is', 'Critical')
     else if (/high priority/.test(phrase)) addFilter('Priority', 'is', 'High')
     else if (/medium priority/.test(phrase)) addFilter('Priority', 'is', 'Medium')
     else if (/low priority/.test(phrase)) addFilter('Priority', 'is', 'Low')

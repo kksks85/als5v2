@@ -91,7 +91,7 @@ const incidentGroupApprovals = (incidents) => incidents.flatMap((incident) => {
     ref: incident.id,
     title: `${isMaterialReplacement ? 'Material replacement approval' : 'Pre-dispatch approval'}: ${incident.title || incident.id}`,
     type: approvalType,
-    priority: incident.priority === 'Critical (AOG)' ? 'Critical' : incident.priority || 'Normal',
+    priority: incident.priority || 'Normal',
     status: member.status,
     requestedBy: approval.requestedBy || 'System',
     assignedTo: member.name,

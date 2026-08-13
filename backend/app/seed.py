@@ -39,7 +39,7 @@ CUSTOMERS = [
     ("Indian Navy", "IN"),
     ("Indian Army Special Forces", "IASF"),
 ]
-PRIORITIES = ["High", "Medium", "Low"]
+PRIORITIES = ["Critical", "High", "Medium", "Low"]
 ISSUES = [
     ("Electrical", "Intermittent power loss reported during system initialization"),
     ("Mechanical", "Actuator movement is restricted during pre-operation checks"),
@@ -107,7 +107,7 @@ def seed_incidents(database) -> None:
                 "title": title,
                 "description": f"{title}. Seeded for workflow and reporting validation.",
                 "customer": customer,
-                "priority": "Critical (AOG)" if index < 16 else PRIORITIES[(index - 16) % len(PRIORITIES)],
+                "priority": PRIORITIES[index % len(PRIORITIES)],
                 "state": incident_state(stage, stage_index),
                 "stage": stage,
                 "status": stage,

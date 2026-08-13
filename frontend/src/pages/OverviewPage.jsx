@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, GripVertical, LayoutDashboard, Plus, Send, Sparkles, Table2, TrendingUp, X } from 'lucide-react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
 import { buildReportPromptGuide, createReportRows, getProductCategoryReportCatalog, parseReportPrompt, reportCatalog, runReportDefinition } from '../data/reportEngine'
@@ -31,7 +31,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
 
   const totalIncidents = incidents.length
   const openIncidents = incidents.filter((i) => i.state !== 'Resolved' && i.state !== 'Closed').length
-  const criticalIncidents = incidents.filter((i) => i.priority === 'Critical' || i.priority === 'Critical (AOG)').length
+  const criticalIncidents = incidents.filter((i) => i.priority === 'Critical').length
   const resolvedThisWeek = incidents.filter((i) => (i.state === 'Resolved' || i.state === 'Closed') && new Date(i.opened) > new Date(Date.now() - 7 * 86400000)).length
 
   return <section className="custom-dashboard">

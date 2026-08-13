@@ -1,3 +1,5 @@
+export const customerAcceptanceStage = 'Post Repair Acceptance by Customer'
+
 export const initialProcesses = [
   ['Incident Registration', 'New', 1],
   ['Incident Registration', 'Registered', 2],
@@ -16,12 +18,12 @@ export const initialProcesses = [
   ['Repair at Site - TASL', 'Resource Assignment', 2],
   ['Repair at Site - TASL', 'Diagnosis', 3],
   ['Repair at Site - TASL', 'Work in Progress', 4],
-  ['Repair at Site - TASL', 'Post Repair Acceptance', 5],
+  ['Repair at Site - TASL', customerAcceptanceStage, 5],
   ['Repair at Site - TASL', 'Closed', 6],
   ['Repair at Site - Vendor', 'Query Registered', 1],
   ['Repair at Site - Vendor', 'Assigned Vendor', 2],
   ['Repair at Site - Vendor', 'Work in Progress - Vendor', 3],
-  ['Repair at Site - Vendor', 'Post Repair Acceptance', 4],
+  ['Repair at Site - Vendor', customerAcceptanceStage, 4],
   ['Repair at Site - Vendor', 'Closed', 5],
   ['Pre Delivery Flight', 'Pre-flight Inspection', 1],
   ['Pre Delivery Flight', 'Flight Preparation', 2],
@@ -39,14 +41,14 @@ export const defaultStageInstruction = (status) => status
   : 'Describe the checks, actions, and evidence required before this stage is complete.'
 
 const siteAcceptanceStageNames = new Map([
-  ['Repair at Site - TASL', new Set(['Post repair Quality Review', 'Post repair QC'])],
-  ['Repair at Site - Vendor', new Set(['Post repair Review', 'Post repair Quality Review', 'Post repair QC'])],
+  ['Repair at Site - TASL', new Set(['Post repair Quality Review', 'Post repair QC', 'Post Repair Acceptance'])],
+  ['Repair at Site - Vendor', new Set(['Post repair Review', 'Post repair Quality Review', 'Post repair QC', 'Post Repair Acceptance'])],
 ])
 
 export const normalizeSiteRepairAcceptanceStages = (processes) => processes.map((process) => {
   const legacyNames = siteAcceptanceStageNames.get(process.repairExecution)
   return legacyNames?.has(process.status)
-    ? { ...process, status: 'Post Repair Acceptance' }
+    ? { ...process, status: customerAcceptanceStage }
     : process
 })
 

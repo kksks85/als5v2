@@ -34,6 +34,7 @@ const sampleOutboundRules = []
 const emptyOutboundRule = {
   name: '',
   trigger: 'On incident creation',
+  approvalType: '',
   recipientType: 'assigned_to',
   templateId: 'incident_creation',
   groupIds: [],
@@ -56,6 +57,7 @@ const recipientOptions = [
   { value: 'requested_for', label: 'Requested For' },
   { value: 'assigned_to', label: 'Assigned To' },
   { value: 'assignment_group', label: 'Assignment Group' },
+  { value: 'approval_assignment_group', label: 'Approval Assignment Group' },
   { value: 'manager', label: 'Manager' },
   { value: 'watch_list', label: 'Watch List' },
   { value: 'specific_user', label: 'Specific User' },
@@ -383,6 +385,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
   const saveOutboundRule = async () => {
     const externalEmails = splitEmails(outboundRuleDraft.externalEmails)
     if (!outboundRuleDraft.name.trim()) { setOutboundRuleError('Enter a rule name before saving.'); return }
+    if (outboundRuleDraft.trigger === 'On approval required' && !outboundRuleDraft.approvalType) { setOutboundRuleError('Select the approval type before saving this rule.'); return }
     if (outboundRuleDraft.recipientType === 'multiple_assignment_groups' && !outboundRuleDraft.groupIds.length) { setOutboundRuleError('Select at least one assignment group.'); return }
     if (outboundRuleDraft.recipientType === 'specific_user' && !outboundRuleDraft.userIds.length) { setOutboundRuleError('Select at least one user.'); return }
     if (outboundRuleDraft.recipientType === 'custom_recipients' && !outboundRuleDraft.userIds.length && !externalEmails.length) { setOutboundRuleError('Select an internal user or enter at least one external email address.'); return }
@@ -391,6 +394,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
       id: editingOutboundRuleId || `outbound-rule-${Date.now()}`,
       name: outboundRuleDraft.name.trim(),
       trigger: outboundRuleDraft.trigger,
+      approvalType: outboundRuleDraft.trigger === 'On approval required' ? outboundRuleDraft.approvalType : '',
       recipientType: outboundRuleDraft.recipientType,
       recipients: recipientOptions.find((option) => option.value === outboundRuleDraft.recipientType)?.label || 'Recipients',
       template: templates.find((template) => template.id === outboundRuleDraft.templateId)?.name || '',
@@ -660,13 +664,19 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
                 <div className="form-grid">
                   <div className="field"><label>Rule name</label><input placeholder="e.g. Assignment notification" value={outboundRuleDraft.name} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, name: event.target.value }))} /></div>
                   <div className="field"><label>Trigger event</label>
-                    <select className="toolbar-select full" value={outboundRuleDraft.trigger} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, trigger: event.target.value }))}>
-                      <option>On incident creation</option><option>On work note update</option><option>On status change</option><option>On assignment change</option><option>Before SLA breach</option><option>On resolution</option><option>On closure</option>
+                    <select className="toolbar-select full" value={outboundRuleDraft.trigger} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, trigger: event.target.value, approvalType: event.target.value === 'On approval required' ? current.approvalType : '' }))}>
+                      <option>On incident creation</option><option>On work note update</option><option>On approval required</option><option>On post-repair dissatisfaction</option><option>On status change</option><option>On assignment change</option><option>Before SLA breach</option><option>On resolution</option><option>On closure</option>
                     </select>
                   </div>
+                  {outboundRuleDraft.trigger === 'On approval required' && <div className="field"><label>Approval type</label>
+                    <select className="toolbar-select full" value={outboundRuleDraft.approvalType} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, approvalType: event.target.value }))}>
+                      <option value="">Select approval type</option><option value="pre-dispatch">Pre-dispatch approval</option><option value="replacement-parts">Part replacement approval</option>
+                    </select>
+                  </div>}
                   <div className="field"><label>Recipients</label>
                     <select className="toolbar-select full" value={outboundRuleDraft.recipientType} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, recipientType: event.target.value, groupIds: [], userIds: [], externalEmails: '' }))}>{recipientOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
                   </div>
+                  {outboundRuleDraft.recipientType === 'approval_assignment_group' && <div className="field full-width"><p className="field-hint recipient-resolution">Recipients are resolved from the approval assignment group on each incident.</p></div>}
                   <div className="field"><label>Email template</label>
                     <select className="toolbar-select full" value={outboundRuleDraft.templateId} onChange={(event) => setOutboundRuleDraft((current) => ({ ...current, templateId: event.target.value }))}>{templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
                   </div>

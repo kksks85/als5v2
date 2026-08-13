@@ -31,7 +31,7 @@ import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
 import { authenticationApi, notificationApi, recordApi } from './data/api'
 import { ensureProductCategoryContractDeliverables, getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
-import { getConfiguredProcesses, getNextProcessStage, normalizeSiteRepairAcceptanceStages, processConfigurationStorageKey } from './data/processConfiguration'
+import { customerAcceptanceStage, getConfiguredProcesses, getNextProcessStage, normalizeSiteRepairAcceptanceStages, processConfigurationStorageKey } from './data/processConfiguration'
 import { seedBatteryProducts, seedGdtProducts, seedGseProducts, seedMastProducts, seedMcsProducts, seedMrlsProducts, seedSimulatorProducts, seedSmeSteProducts, seedTmvProducts, seedToolsProducts, seedWarheadSamProducts } from './data/productMasterSeeds'
 
 /* ──────────────────────────────────────────
@@ -151,6 +151,10 @@ const normalizeIncidentAssignmentGroups = (incidents) => incidents.map((incident
   return assignmentGroup === currentAssignmentGroup
     ? incident
     : { ...incident, assignmentGroup, group: assignmentGroup, assignedTo: '' }
+})
+const normalizeCustomerAcceptanceIncidents = (incidents) => incidents.map((incident) => {
+  if (!['Repair at Site - TASL', 'Repair at Site - Vendor'].includes(incident.repairExecution) || incident.status !== 'Post Repair Acceptance') return incident
+  return { ...incident, status: customerAcceptanceStage, stage: incident.stage === 'Post Repair Acceptance' ? customerAcceptanceStage : incident.stage }
 })
 const normalizeProcessAssignmentGroups = (processes) => processes.map((process) => {
   const assignmentGroup = normalizeAssignmentGroupName(process.assignmentGroup || '')
@@ -560,7 +564,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
             if (active) setRecords(resource === 'assignment_groups'
               ? persistedRecords.map((group) => group.name === 'Customer Support Manager' ? { ...group, name: 'Customer Support Management Group' } : group.name === 'Advisory Team' ? { ...group, name: 'Advisory Group' } : group)
               : resource === 'customers' ? reseedCustomerContacts(persistedRecords)
-                : resource === 'incidents' ? normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(persistedRecords))
+                : resource === 'incidents' ? normalizeCustomerAcceptanceIncidents(normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(persistedRecords)))
                   : resource === 'process_configurations' ? normalizeSiteRepairAcceptanceStages(normalizeProcessAssignmentGroups(persistedRecords))
                     : persistedRecords)
             persistedCollections.current[resource] = new Map(stored.map((record) => [record.record_id, JSON.stringify(record.payload)]))
@@ -800,7 +804,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
           setRecords(resource === 'assignment_groups'
             ? records.map((group) => group.name === 'Customer Support Manager' ? { ...group, name: 'Customer Support Management Group' } : group.name === 'Advisory Team' ? { ...group, name: 'Advisory Group' } : group)
             : resource === 'customers' ? reseedCustomerContacts(records)
-              : resource === 'incidents' ? normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(records))
+              : resource === 'incidents' ? normalizeCustomerAcceptanceIncidents(normalizeIncidentAssignmentGroups(normalizeIncidentOpenedDates(records)))
                 : resource === 'process_configurations' ? normalizeProcessAssignmentGroups(records)
                   : records)
           persistedCollections.current[resource] = remoteMap
