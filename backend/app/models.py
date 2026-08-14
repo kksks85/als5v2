@@ -50,6 +50,10 @@ class IncidentRecord(RecordMixin, Base):
     __tablename__ = "incidents"
 
 
+class QueryRecord(RecordMixin, Base):
+    __tablename__ = "queries"
+
+
 class KnowledgeDocumentRecord(RecordMixin, Base):
     __tablename__ = "knowledge_documents"
 

@@ -3,13 +3,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, Bell, BookOpen, Building2, CalendarDays, ChevronDown, ChevronRight, CircleHelp,
   ClipboardList, FileText, LayoutDashboard, Lock, LogIn,
-  Mail, Menu, Package, Plus, Search, Settings, Shield,
+  Mail, Package, Plus, Search, Settings, Shield,
   ShieldCheck, Users, UsersRound, Workflow, Wrench,
 } from 'lucide-react'
 import './App.css'
 
 import OverviewPage from './pages/OverviewPage'
 import IncidentsPage from './pages/IncidentsPage'
+import QueryManagementPage from './pages/QueryManagementPage'
 import CustomersPage, { initialCustomers } from './pages/CustomersPage'
 import ContractsPage, { initialContracts, normalizeWarrantyStatus } from './pages/ContractsPage'
 import SubcontractsPage from './pages/SubcontractsPage'
@@ -29,6 +30,7 @@ import AuthenticationSettingsPage from './pages/AuthenticationSettingsPage'
 import KnowledgeManagementPage, { seedDocuments } from './pages/KnowledgeManagementPage'
 import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
+import WarrantyQualityClaimsPage from './pages/WarrantyQualityClaimsPage'
 import { authenticationApi, notificationApi, recordApi } from './data/api'
 import { ensureProductCategoryContractDeliverables, getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
 import { customerAcceptanceStage, getConfiguredProcesses, getNextProcessStage, normalizeSiteRepairAcceptanceStages, processConfigurationStorageKey } from './data/processConfiguration'
@@ -40,6 +42,8 @@ import { seedBatteryProducts, seedGdtProducts, seedGseProducts, seedMastProducts
 const workspaceNav = [
   { key: 'Overview', label: 'Overview', icon: LayoutDashboard },
   { key: 'Incidents', label: 'Incidents', icon: ClipboardList },
+  { key: 'Query Management', label: 'Query Management', icon: ClipboardList },
+  { key: 'Warranty / Quality Claims', label: 'Warranty / Quality Claims', icon: ClipboardList, claimsOnly: true },
   { key: 'Customers', label: 'Customers', icon: Building2 },
   { key: 'Contracts', label: 'Contracts', icon: FileText },
   { key: 'Sub-contracts', label: 'Sub-contracts', icon: FileText },
@@ -53,7 +57,7 @@ const workspaceNav = [
 ]
 
 const standardWorkspaceKeys = new Set([
-  'Overview', 'Incidents', 'Inventory Master', 'Product categories',
+  'Overview', 'Incidents', 'Query Management', 'Inventory Master', 'Product categories',
   'Knowledge management', 'Reporting', 'Approval center',
 ])
 
@@ -427,6 +431,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [incidentEditMode, setIncidentEditMode] = useState(false)
   const [customers, setCustomers] = useState(initialCustomers)
   const [incidents, setIncidents] = useState([])
+  const [queries, setQueries] = useState([])
+  const [warrantyQualityClaims, setWarrantyQualityClaims] = useState([])
   const [contracts, setContracts] = useState(initialContracts)
   const [subcontracts, setSubcontracts] = useState([])
   const [pendingSubcontractContract, setPendingSubcontractContract] = useState('')
@@ -469,6 +475,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       return () => window.removeEventListener('popstate', openIncidentFromUrl)
     }, [])
   const seenNotificationIds = useRef(new Set())
+    const notificationMenuRef = useRef(null)
   const notificationsInitialized = useRef(false)
   const [persistenceReady, setPersistenceReady] = useState(false)
   const persistedCollections = useRef({})
@@ -535,6 +542,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       { resource: 'gse_products', records: gseProducts, setRecords: setGseProducts, key: (record) => record.id },
       { resource: 'product_assets', records: productAssets, setRecords: setProductAssets, key: (record) => record.id },
       { resource: 'incidents', records: incidents, setRecords: setIncidents, key: (record) => record.id },
+      { resource: 'queries', records: queries, setRecords: setQueries, key: (record) => record.id },
+      { resource: 'warranty_quality_claims', records: warrantyQualityClaims, setRecords: setWarrantyQualityClaims, key: (record) => record.id },
       { resource: 'knowledge_documents', records: knowledgeDocuments, setRecords: setKnowledgeDocuments, key: (record) => record.id || record.number || record.title },
       { resource: 'mail_correspondence', records: mailCorrespondence, setRecords: setMailCorrespondence, key: (record) => record.id },
       { resource: 'calendar_events', records: calendarEvents, setRecords: setCalendarEvents, key: (record) => record.id },
@@ -654,7 +663,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     const pruneStaleReadNotifications = () => {
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
       setNotifications((current) => {
-        const retained = current.filter((notification) => !isStaleReadNotification(notification, cutoff))
+        const retained = current.filter((notification) => !isReadNotification(notification) && notificationTimestamp(notification) >= cutoff)
         return retained.length === current.length ? current : retained
       })
     }
@@ -704,6 +713,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       ['gse_products', gseProducts, (record) => record.id],
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
+      ['warranty_quality_claims', warrantyQualityClaims, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
       ['mail_correspondence', mailCorrespondence, (record) => record.id],
       ['calendar_events', calendarEvents, (record) => record.id],
@@ -728,7 +738,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         persistedCollections.current[resource] = nextRecordMap
       }).catch((error) => console.warn(`Unable to save ${resource}.`, error))
     })
-  }, [assignmentGroups, batteryProducts, calendarEvents, categoryProducts, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, persistenceReady, processes, productAssets, products, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warheadSamProducts])
+  }, [assignmentGroups, batteryProducts, calendarEvents, categoryProducts, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, persistenceReady, processes, productAssets, products, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warrantyQualityClaims, warheadSamProducts])
 
   useEffect(() => {
     const collections = [
@@ -749,6 +759,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       ['gse_products', gseProducts, (record) => record.id],
       ['product_assets', productAssets, (record) => record.id],
       ['incidents', incidents, (record) => record.id],
+      ['queries', queries, (record) => record.id],
       ['knowledge_documents', knowledgeDocuments, (record) => record.id || record.number || record.title],
       ['mail_correspondence', mailCorrespondence, (record) => record.id],
       ['calendar_events', calendarEvents, (record) => record.id],
@@ -759,7 +770,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       ['notifications', notifications, (record) => record.id],
     ]
     currentCollections.current = Object.fromEntries(collections.map(([resource, records, key]) => [resource, new Map(records.map((record) => [String(key(record)), JSON.stringify(record)]))]))
-  }, [assignmentGroups, batteryProducts, calendarEvents, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, processes, productAssets, products, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warheadSamProducts])
+  }, [assignmentGroups, batteryProducts, calendarEvents, contracts, customers, gdtProducts, gseProducts, incidents, knowledgeDocuments, mailCorrespondence, mastProducts, mcsProducts, mrlsProducts, notifications, processes, productAssets, products, queries, repairExecutions, simulatorProducts, smeSteProducts, subcontracts, tmvProducts, toolsProducts, users, warrantyQualityClaims, warheadSamProducts])
 
   useEffect(() => {
     if (!persistenceReady) return
@@ -781,6 +792,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       ['gse_products', setGseProducts, (record) => record.id],
       ['product_assets', setProductAssets, (record) => record.id],
       ['incidents', setIncidents, (record) => record.id],
+      ['queries', setQueries, (record) => record.id],
       ['knowledge_documents', setKnowledgeDocuments, (record) => record.id || record.number || record.title],
       ['mail_correspondence', setMailCorrespondence, (record) => record.id],
       ['calendar_events', setCalendarEvents, (record) => record.id],
@@ -921,6 +933,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
     .map((group) => group.name)
   const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
+  const hasWarrantyQualityClaimsAccess = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Advisory Group')
   const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
   const visibleIncidentCount = incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group)).length
   useEffect(() => {
@@ -941,6 +954,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     return () => window.clearTimeout(timer)
   }, [notificationToasts])
 
+  useEffect(() => {
+    if (!notificationsOpen) return undefined
+    const closeOnOutsideClick = (event) => {
+      if (!notificationMenuRef.current?.contains(event.target)) setNotificationsOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
+  }, [notificationsOpen])
+
   const toggleNotifications = () => setNotificationsOpen((open) => !open)
   const openNotification = (notification) => {
     setNotifications((current) => current.map((entry) => entry.id !== notification.id ? entry : entry.recipientUserId
@@ -958,11 +980,13 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
-      case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
+      case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={() => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') }} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
       case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
+      case 'Query Management': return <QueryManagementPage queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} />
+      case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} incidents={incidents} productCategories={productCategories} currentUser={user} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
       case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
@@ -1011,7 +1035,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
 
         <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
-          {workspaceNav.filter(({ key }) => hasFullWorkspaceAccess || standardWorkspaceKeys.has(key)).map(({ key, label, icon: Icon, count }) => {
+          {workspaceNav.filter(({ key, claimsOnly }) => claimsOnly ? hasWarrantyQualityClaimsAccess : hasFullWorkspaceAccess || standardWorkspaceKeys.has(key)).map(({ key, label, icon: Icon, count }) => {
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
             if (key === 'Incidents') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
@@ -1055,7 +1079,6 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       {/* ── Main ── */}
       <main>
         <header className="topbar">
-          <button className="icon-button mobile-menu" aria-label={mobileNavigationOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavigationOpen} onClick={() => setMobileNavigationOpen((open) => !open)}><Menu size={20} /></button>
           <div className="breadcrumb"><span>Service management</span><ChevronRight size={15} /><strong>{activePage.startsWith('Product category:') ? activePage.slice('Product category:'.length) : activePage.startsWith('Approval center:') ? activePage.slice('Approval center: '.length) : activePage}</strong></div>
           <div className="topbar-actions">
             {!incidentEditMode && <label className="customer-context">
@@ -1065,7 +1088,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
               </select>
             </label>}
             <button className="icon-button" aria-label="Search" onClick={() => setSearchOpen(!searchOpen)}><Search size={19} /></button>
-            <div className="notification-menu"><button className="icon-button notification" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={toggleNotifications}><Bell size={19} />{unreadNotifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><header><strong>Notifications</strong><span>{unreadNotifications.length}</span></header>{notificationsForCurrentUser.length ? <ul>{notificationsForCurrentUser.map((notification) => <li key={notification.id} className={notification.recipientUserId && !notification.readByUserIds?.includes(currentUserRecord.id) ? 'unread' : ''}><button type="button" onClick={() => openNotification(notification)}><strong>{notification.title}</strong><span>{notification.incidentId ? notification.incidentId : `${notification.contractNumber} · ${notification.customer}`}</span><small>{notification.workNotes || `Expired ${notification.expiryDate} · ${notification.recipientGroup}`}</small></button></li>)}</ul> : <p>No notifications.</p>}</div>}</div>
+            <div className="notification-menu" ref={notificationMenuRef}><button className="icon-button notification" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={toggleNotifications}><Bell size={19} />{unreadNotifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><header><strong>Notifications</strong><span>{unreadNotifications.length}</span></header>{notificationsForCurrentUser.length ? <ul>{notificationsForCurrentUser.map((notification) => <li key={notification.id} className={notification.recipientUserId && !notification.readByUserIds?.includes(currentUserRecord.id) ? 'unread' : ''}><button type="button" onClick={() => openNotification(notification)}><strong>{notification.title}</strong><span>{notification.incidentId ? notification.incidentId : `${notification.contractNumber} · ${notification.customer}`}</span><small>{notification.workNotes || `Expired ${notification.expiryDate} · ${notification.recipientGroup}`}</small></button></li>)}</ul> : <p>No notifications.</p>}</div>}</div>
             <div className="profile-menu"><button className="profile" onClick={() => setProfileMenuOpen((open) => !open)} aria-label="Open account menu" aria-expanded={profileMenuOpen}>
               <span>{user.initials}</span>
               <div><strong>{user.name}</strong><small>{impersonatingUser ? `Impersonating · ${user.role}` : user.role}</small></div>
@@ -1081,60 +1104,6 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       </main>
     </div>
   )
-}
-
-const formFieldSelector = [
-  '.field',
-  '.incident-field',
-  '.customer-field',
-  '.user-config-grid label',
-  '.group-config-fields label',
-  '.asset-form-grid label',
-  '.product-record-editor label',
-  '.knowledge-form-sheet label',
-  '.settings-form-grid label',
-  '.report-dialog label',
-  'form label',
-].join(', ')
-
-const databaseColumnFromLabel = (label) => label
-  .replace(/\*/g, '')
-  .replace(/\([^)]*\)/g, '')
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '_')
-  .replace(/^_|_$/g, '')
-
-function DatabaseColumnInspector() {
-  const [inspector, setInspector] = useState(null)
-
-  useEffect(() => {
-    const close = () => setInspector(null)
-    const handleContextMenu = (event) => {
-      const field = event.target.closest(formFieldSelector)
-      if (!field) return
-      const caption = field.matches('label')
-        ? field.querySelector(':scope > span')?.textContent || field.childNodes[0]?.textContent || ''
-        : field.querySelector(':scope > label, :scope > span')?.textContent || ''
-      const control = field.querySelector('input, select, textarea')
-      const column = field.dataset.dbColumn || control?.dataset.dbColumn || control?.name || databaseColumnFromLabel(caption)
-      if (!column) return
-      event.preventDefault()
-      setInspector({ column, x: event.clientX, y: event.clientY })
-    }
-    const handleKeyDown = (event) => { if (event.key === 'Escape') close() }
-    document.addEventListener('contextmenu', handleContextMenu)
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu)
-      document.removeEventListener('click', close)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [])
-
-  if (!inspector) return null
-  return <div className="database-column-popover" role="status" style={{ left: Math.min(inspector.x, window.innerWidth - 236), top: Math.min(inspector.y, window.innerHeight - 72) }}><span>Database column</span><code>{inspector.column}</code></div>
 }
 
 /* ──────────────────────────────────────────
@@ -1181,7 +1150,7 @@ export default function App() {
   }
   const canImpersonate = String(authenticatedUser?.role || '').toLowerCase() === 'administrator'
   const impersonatingUser = Boolean(authenticatedUser && user && authenticatedUser.email !== user.email)
-  if (!user) return <><LoginPage onLogin={login} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} /><DatabaseColumnInspector /></>
-  return <><Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={(nextUser) => setUser({ ...nextUser, session: authenticatedUser?.session })} onStopImpersonating={() => setUser(authenticatedUser)} /><DatabaseColumnInspector /></>
-  return <><Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} /><DatabaseColumnInspector /></>
+  if (!user) return <LoginPage onLogin={login} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} />
+  return <Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={(nextUser) => setUser({ ...nextUser, session: authenticatedUser?.session })} onStopImpersonating={() => setUser(authenticatedUser)} />
+  return <Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} />
 }

@@ -1,6 +1,62 @@
-import { useMemo, useState } from 'react'
-import { ArrowLeft, Download, Edit2, Eye, Plus, Search, Trash2, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { ArrowLeft, Download, Edit2, Eye, FileUp, Plus, Search, Trash2, X } from 'lucide-react'
 import { defaultStageInstruction } from '../data/processConfiguration'
+
+const normalizeCsvHeader = (header) => String(header ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+const parseCsv = (text) => {
+  const rows = []
+  let currentRow = []
+  let currentValue = ''
+  let inQuotes = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+    const nextCharacter = text[index + 1]
+
+    if (character === '"') {
+      if (inQuotes && nextCharacter === '"') {
+        currentValue += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (character === ',' && !inQuotes) {
+      currentRow.push(currentValue)
+      currentValue = ''
+      continue
+    }
+
+    if ((character === '\n' || character === '\r') && !inQuotes) {
+      if (character === '\r' && nextCharacter === '\n') index += 1
+      currentRow.push(currentValue)
+      if (currentRow.some((cell) => String(cell).trim() !== '')) rows.push(currentRow)
+      currentRow = []
+      currentValue = ''
+      continue
+    }
+
+    currentValue += character
+  }
+
+  if (currentValue.length || currentRow.length) {
+    currentRow.push(currentValue)
+    if (currentRow.some((cell) => String(cell).trim() !== '')) rows.push(currentRow)
+  }
+
+  return rows
+}
+
+const lookupCsvValue = (record, keys) => {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value !== 'undefined' && value !== null && String(value).trim() !== '') return String(value).trim()
+  }
+  return ''
+}
 
 const emptyProcess = { repairExecution: '', status: '', assignmentGroup: '', order: '', instruction: '' }
 const columns = [
@@ -20,6 +76,8 @@ export default function ProcessConfigurationPage({ assignmentGroups, repairExecu
   const [viewProcess, setViewProcess] = useState(null)
   const [columnWidths, setColumnWidths] = useState(() => Object.fromEntries(columns.map(({ key, width }) => [key, width])))
   const [sorted, setSorted] = useState({ key: 'id', direction: 'asc' })
+  const [importMessage, setImportMessage] = useState('')
+  const importInput = useRef(null)
 
   const assignmentGroupOptions = assignmentGroups.filter((group) => group.active).map((group) => group.name)
   const repairExecutionOptions = repairExecutions.filter((execution) => execution.active).map((execution) => execution.name)
@@ -62,12 +120,75 @@ export default function ProcessConfigurationPage({ assignmentGroups, repairExecu
     const a = document.createElement('a'); a.href = url; a.download = 'process-configuration.csv'; a.click(); URL.revokeObjectURL(url)
   }
 
+  const importCsv = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const rows = parseCsv(text)
+      if (rows.length < 2) {
+        setImportMessage('The CSV must include a header row and at least one process row.')
+        event.target.value = ''
+        return
+      }
+
+      const headerRow = rows[0].map((header) => normalizeCsvHeader(header))
+      const dataRows = rows.slice(1)
+
+      const importedProcesses = dataRows
+        .map((row) => {
+          const record = Object.fromEntries(headerRow.map((header, index) => [header, row[index] ?? '']))
+          const repairExecution = lookupCsvValue(record, ['repairexecution', 'repairexecutionname', 'repair', 'repairname'])
+          const status = lookupCsvValue(record, ['status', 'stage', 'processstatus'])
+          const assignmentGroup = lookupCsvValue(record, ['assignmentgroup', 'assignmentgroupname', 'group', 'assignedgroup'])
+          const orderValue = lookupCsvValue(record, ['order', 'sequence', 'stageorder'])
+
+          return { repairExecution, status, assignmentGroup, order: orderValue }
+        })
+        .filter((row) => row.repairExecution || row.status || row.order)
+        .map((row, index) => {
+          if (!row.repairExecution || !row.status || !row.order) {
+            throw new Error(`Row ${index + 2} is missing a required Repair Execution, Status, or Order value.`)
+          }
+
+          const parsedOrder = Number(row.order)
+          if (!Number.isFinite(parsedOrder)) {
+            throw new Error(`Row ${index + 2} has an invalid Order value: ${row.order}`)
+          }
+
+          return {
+            id: index + 1,
+            repairExecution: row.repairExecution,
+            status: row.status,
+            assignmentGroup: row.assignmentGroup,
+            order: parsedOrder,
+          }
+        })
+
+      if (!importedProcesses.length) {
+        setImportMessage('No valid process rows were found in this CSV file.')
+        event.target.value = ''
+        return
+      }
+
+      setProcesses(importedProcesses)
+      setImportMessage(`${importedProcesses.length} process rows imported from ${file.name}.`)
+    } catch (error) {
+      setImportMessage(error.message || 'The CSV file could not be read. Use a header row with Repair Execution, Status, and Order columns.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   if (showForm || editingProcess) return <ProcessForm process={editingProcess} assignmentGroupOptions={assignmentGroupOptions} repairExecutionOptions={repairExecutionOptions} onCancel={() => { setShowForm(false); setEditingProcess(null) }} onSubmit={saveProcess} />
   if (viewProcess) return <section className="customer-detail-page"><header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={() => setViewProcess(null)}><ArrowLeft size={15} /> Process configuration</button><h1>{viewProcess.status}</h1><p className="customer-detail-subtitle">{viewProcess.repairExecution}</p></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={() => setViewProcess(null)}>Close</button><button type="button" className="customer-edit-button" onClick={() => { setEditingProcess(viewProcess); setViewProcess(null) }}><Edit2 size={15} /> Edit</button></div></header><section className="customer-detail-sheet"><section className="detail-section"><h2>Process details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">ID</span><span className="detail-value">{viewProcess.id}</span></div><div className="detail-field"><span className="detail-label">Repair execution</span><span className="detail-value">{viewProcess.repairExecution}</span></div><div className="detail-field"><span className="detail-label">Status</span><span className="detail-value">{viewProcess.status}</span></div><div className="detail-field"><span className="detail-label">Assignment group</span><span className="detail-value">{viewProcess.assignmentGroup}</span></div><div className="detail-field"><span className="detail-label">Order</span><span className="detail-value">{viewProcess.order}</span></div></div></section><section className="detail-section"><h2>Stage instruction</h2><p className="process-instruction-preview">{viewProcess.instruction || defaultStageInstruction(viewProcess.status)}</p></section></section></section>
 
   return <section className="customer-list-page process-list-page" aria-label="Process configuration">
-    <div className="customer-list-head"><div className="customer-list-title"><h1>Process configuration</h1></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filteredProcesses.length}><Download size={15} /> Extract data</button><button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New process</button></div></div>
+    <div className="customer-list-head"><div className="customer-list-title"><h1>Process configuration</h1></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filteredProcesses.length}><Download size={15} /> Extract data</button><button className="compact-button secondary" onClick={() => importInput.current?.click()}><FileUp size={15} /> Import CSV</button><button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New process</button></div></div>
+    <input ref={importInput} type="file" accept=".csv,text/csv" hidden onChange={importCsv} />
     <div className="customer-command-bar"><div className="customer-search"><Search size={15} /><input aria-label="Search processes" placeholder="Search processes..." value={search} onChange={(event) => setSearch(event.target.value)} /></div><span className="customer-list-count">{filteredProcesses.length ? `${filteredProcesses.length} process${filteredProcesses.length === 1 ? '' : 'es'}` : '0 results'}</span></div>
+    {importMessage && <div className="import-message success" style={{ margin: '0 0 12px' }}>{importMessage}</div>}
     <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key} className={column.key === 'actions' ? '' : `sortable ${sorted.key === column.key ? `sorted-${sorted.direction}` : ''}`} onClick={column.key === 'actions' ? undefined : () => sortBy(column.key)}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => { event.stopPropagation(); startColumnResize(event, column) }} />}</th>)}</tr></thead><tbody>{filteredProcesses.map((process) => <tr key={process.id}><td>{process.id}</td><td>{process.repairExecution}</td><td>{process.status}</td><td>{process.assignmentGroup}</td><td className="numeric">{process.order}</td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setViewProcess(process)}><Eye size={14} /></button><button className="icon-button" title="Edit" onClick={() => setEditingProcess(process)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(process)}><Trash2 size={14} /></button></td></tr>)}{!filteredProcesses.length && <tr><td colSpan="6" className="empty-row">No processes match the search criteria.</td></tr>}</tbody></table></div></div>
     <footer className="customer-pagination"><span>Total: {processes.length} process{processes.length === 1 ? '' : 'es'}</span></footer>
     {deleteConfirm && <DeleteConfirmation process={deleteConfirm} onCancel={() => setDeleteConfirm(null)} onConfirm={() => { setProcesses((current) => current.filter((process) => process.id !== deleteConfirm.id)); setDeleteConfirm(null) }} />}

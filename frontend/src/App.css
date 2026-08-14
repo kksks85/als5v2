@@ -1035,6 +1035,17 @@ main { min-width:0; display:flex; flex-direction:column; }
 .incident-field small { display:block; margin-top:4px; color:#8194aa; font-size:10px; line-height:1.35; }
 .incident-field.has-error input,.incident-field.has-error select { border-color:#c65c56; }
 .incident-field .incident-field-error { color:#b64842; font-weight:600; }
+.claim-other-contact { display:flex; align-items:flex-start; gap:8px; min-height:34px; padding:8px 10px; border:1px solid #cfddeb; border-radius:4px; color:#355b7b; background:#fff; box-sizing:border-box; }
+.claim-other-contact input { width:15px; height:15px; margin:2px 0 0; accent-color:#2f75c6; }
+.claim-other-contact strong,.claim-other-contact small { display:block; }
+.claim-other-contact strong { font-size:12px; }
+.claim-other-contact small { margin-top:2px; color:#7389a0; font-size:10px; line-height:1.3; }
+.incident-field select[multiple] { height:88px; padding:4px 8px; }
+.claim-related-incident { display:grid; grid-template-columns:minmax(0,1fr) 34px; gap:6px; }
+.claim-related-incident .icon-button { width:34px; height:34px; border:1px solid #cfddeb; border-radius:4px; color:#2f75c6; background:#fff; }
+.claim-related-list { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.claim-related-list span { display:inline-flex; align-items:center; gap:5px; padding:3px 6px; border:1px solid #cfddeb; border-radius:3px; color:#355b7b; background:#f7faff; font-size:10px; }
+.claim-related-list button { border:0; padding:0; color:#7b92aa; background:transparent; font:inherit; cursor:pointer; }
 .incident-auto-field { display:flex; align-items:center; height:34px; padding:0 9px; border:1px dashed #cfdaea; border-radius:4px; color:#8295aa; background:#f6f9fd; font-size:12px; }
 .incident-description-section { display:block; }
 .incident-description-section .incident-field + .incident-field { margin-top:13px; }
@@ -1103,6 +1114,19 @@ main { min-width:0; display:flex; flex-direction:column; }
 .replacement-parts-panel { min-height:0; }
 .replacement-parts-panel > .repair-completed-check { display:inline-flex; align-items:center; gap:5px; min-height:27px; margin:0 0 8px auto; padding:0 8px; border:1px solid #d6e2ec; border-radius:3px; color:#355b7b; background:#fff; font-size:10px; font-weight:750; white-space:nowrap; }
 .replacement-parts-panel > .repair-completed-check input { width:13px; height:13px; margin:0; accent-color:#2f75c6; }
+.post-repair-history { padding:14px 18px; border-top:1px solid #d7e3ee; background:#f8fbfe; }
+.post-repair-history > header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.post-repair-history h3 { margin:0; color:#315c84; font-size:12px; }
+.post-repair-history > header p { margin:3px 0 0; color:#7389a0; font-size:10px; }
+.post-repair-history > header b { padding:3px 7px; border:1px solid #d6e2ec; border-radius:3px; color:#7187a1; background:#fff; font-size:9px; text-transform:uppercase; }
+.post-repair-history-list { display:grid; gap:8px; }
+.post-repair-history-list article { padding:10px 12px; border:1px solid #d7e3ee; border-radius:3px; background:#fff; }
+.post-repair-history-list article > header { display:flex; justify-content:space-between; gap:10px; margin-bottom:8px; color:#7389a0; font-size:10px; }
+.post-repair-history-list dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; margin:0; }
+.post-repair-history-list dl div { min-width:0; }
+.post-repair-history-list dt { margin-bottom:2px; color:#55738f; font-size:10px; font-weight:750; }
+.post-repair-history-list dd { margin:0; color:#355b7b; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
+.post-repair-history-list article > p { margin:0; color:#7389a0; font-size:11px; }
 .replacement-source-panel { margin:0 0 10px; border:1px solid #d6e2ec; background:#fbfdff; }
 .replacement-source-panel > header { padding:9px 11px 8px; border-bottom:1px solid #e1eaf2; background:#f4f8fc; }
 .replacement-source-panel > header strong,.replacement-source-panel > header span { display:block; }
@@ -1533,3 +1557,19 @@ main { min-width:0; display:flex; flex-direction:column; }
 .delegation-direction.to-me{background:#f3e5f5;color:#6a1b9a;border:1px solid #ce93d8}
 @media(max-width:900px){.approval-header{flex-direction:column}.approval-header-meta{width:100%}.approval-toolbar{flex-direction:column;align-items:stretch}.approval-detail-layout{grid-template-columns:1fr}.approval-request-section,.approval-assignment-section,.approval-resolution-section,.approval-decision-panel,.approval-remarks-section{grid-column:1;grid-row:auto}}
 @media(max-width:600px){.approval-detail-hero{grid-template-columns:34px minmax(0,1fr);padding:14px}.approval-detail-state{grid-column:2;align-items:flex-start;padding-top:0}.approval-detail-heading h1{font-size:16px}.approval-metadata-grid{grid-template-columns:1fr}.approval-detail-layout{gap:12px;margin-top:12px}.approval-detail-section{padding:13px}}
+
+.post-repair-feedback-required { margin:0; padding:8px 12px; border-top:1px solid #ead9a5; color:#86610d; background:#fffaf0; font-size:10px; }
+
+.post-repair-feedback-required { margin:0; padding:8px 12px; border-top:1px solid #ead9a5; color:#86610d; background:#fffaf0; font-size:10px; }
+
+.incident-journal dd .journal-structured-value { display:block; margin:0; }
+.journal-structured-value dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 14px; margin:0; }
+.journal-structured-value dl div { min-width:0; }
+.journal-structured-value dt { color:#5c7895; font-size:10px; font-weight:750; }
+.journal-structured-value dd { margin:2px 0 0; color:#355b7b; font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+
+.incident-journal dd .journal-structured-value { display:block; margin:0; }
+.journal-structured-value dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 14px; margin:0; }
+.journal-structured-value dl div { min-width:0; }
+.journal-structured-value dt { color:#5c7895; font-size:10px; font-weight:750; }
+.journal-structured-value dd { margin:2px 0 0; color:#355b7b; font-size:11px; line-height:1.35; overflow-wrap:anywhere; }

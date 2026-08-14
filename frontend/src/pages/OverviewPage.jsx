@@ -6,7 +6,7 @@ import { buildReportPromptGuide, createReportRows, getProductCategoryReportCatal
 const ReactGridLayout = WidthProvider(GridLayout)
 const palette = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#6366f1', '#0d9488', '#ca8a04', '#be185d']
 
-export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords }) {
+export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords, onCreateIncident }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [nlpPanel, setNlpPanel] = useState(null)
   const rowsBySource = useMemo(() => {
@@ -38,9 +38,8 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     <header className="dashboard-header">
       <div><h1>Dashboard</h1>{selectedCustomer !== 'All customers' && <span className="dash-filter-badge">{selectedCustomer}</span>}</div>
       <div className="dashboard-actions">
-        <button className="compact-button secondary" onClick={() => nlpPanel?.scrollIntoView({ block: 'start' })}><Bot size={14} /> NLP reporting</button>
-        <button className="compact-button secondary" onClick={() => onNavigate('Reporting')}><BarChart3 size={14} /> Reports</button>
-        <button className="compact-button primary" onClick={() => setPickerOpen(true)}><Plus size={14} /> Add tile</button>
+        <button className="compact-button primary" onClick={onCreateIncident}><Plus size={14} /> Create incident</button>
+        <button className="compact-button secondary" onClick={() => setPickerOpen(true)}><Plus size={14} /> Add tile</button>
       </div>
     </header>
 

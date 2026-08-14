@@ -58,6 +58,116 @@ FALLBACK_PRODUCTS = [
     {"product_serial_number": "LM-003", "product_category": "Loitering Munition", "subsystems": "PROPULSION"},
 ]
 FALLBACK_GROUPS = ["Customer Support Manager", "Engineering Team", "Flight Team", "Hardware", "Quality Management", "Radio"]
+DEMO_USERS = [
+    {
+        "record_id": "1",
+        "payload": {
+            "id": 1,
+            "name": "Amitabh Sharma",
+            "employeeId": "ALS-EMP-001",
+            "email": "amitabh.sharma@aerofix.in",
+            "entraId": "7c8f4a10-2b65-4e9a-ae50-000000000001",
+            "jobTitle": "System Administrator",
+            "phone": "+91 9810000001",
+            "role": "Administrator",
+            "groups": "Admin Team",
+            "status": "Active",
+            "provider": "Entra ID",
+            "lastLogin": "22 Jul 2026 09:30",
+            "created": "01 Jul 2026",
+        },
+    },
+    {
+        "record_id": "3",
+        "payload": {
+            "id": 3,
+            "name": "Rahul Mehta",
+            "employeeId": "ALS-EMP-003",
+            "email": "rahul.mehta@aerofix.in",
+            "entraId": "7c8f4a10-2b65-4e9a-ae50-000000000003",
+            "jobTitle": "Service Manager",
+            "phone": "+91 9810000003",
+            "role": "Manager",
+            "groups": "Customer Support Management Group",
+            "status": "Active",
+            "provider": "Entra ID",
+            "lastLogin": "22 Jul 2026 09:30",
+            "created": "01 Jul 2026",
+        },
+    },
+]
+DEMO_ASSIGNMENT_GROUPS = [
+    {
+        "record_id": "1",
+        "payload": {
+            "id": 1,
+            "name": "Customer Support Management Group",
+            "manager": "Rahul Mehta",
+            "description": "Customer support operations group.",
+            "memberIds": [3],
+            "members": 1,
+            "escalatesTo": "",
+            "created": "01 Jul 2026",
+            "updated": "22 Jul 2026",
+            "active": True,
+        },
+    },
+]
+DEMO_GROUP_NAMES = [
+    "Program Management",
+    "Flight Team",
+    "Engineering Team",
+    "Design Team",
+    "GCS",
+    "Production Management",
+    "Hardware",
+    "Manufacturing Engineering",
+    "Radio",
+    "Quality Management",
+    "Supply Chain management",
+    "Store Management",
+    "System Administration",
+    "Admin Team",
+    "Advisory Group",
+]
+
+for group_id, group_name in enumerate(DEMO_GROUP_NAMES, start=2):
+    user_id = group_id + 100
+    account_name = f"{group_name} Demo"
+    account_slug = group_name.lower().replace(" ", ".")
+    DEMO_USERS.append({
+        "record_id": str(user_id),
+        "payload": {
+            "id": user_id,
+            "name": account_name,
+            "employeeId": f"ALS-EMP-{user_id:03d}",
+            "email": f"{account_slug}.demo@aerofix.in",
+            "entraId": f"7c8f4a10-2b65-4e9a-ae50-{user_id:012d}",
+            "jobTitle": "Demo Service Representative",
+            "phone": f"+91 98100{user_id:05d}",
+            "role": "Administrator" if group_name == "Admin Team" else "Service engineer",
+            "groups": group_name,
+            "status": "Active",
+            "provider": "Entra ID",
+            "lastLogin": "22 Jul 2026 09:30",
+            "created": "01 Jul 2026",
+        },
+    })
+    DEMO_ASSIGNMENT_GROUPS.append({
+        "record_id": str(group_id),
+        "payload": {
+            "id": group_id,
+            "name": group_name,
+            "manager": account_name,
+            "description": f"{group_name} demo support group.",
+            "memberIds": [user_id],
+            "members": 1,
+            "escalatesTo": "",
+            "created": "01 Jul 2026",
+            "updated": "22 Jul 2026",
+            "active": True,
+        },
+    })
 
 
 def incident_state(stage: str, stage_index: int) -> str:
@@ -208,6 +318,13 @@ def seed_product_assets(database) -> None:
     ))
 
 
+def seed_demo_identities(database) -> None:
+    user_records = insert(UserRecord).values(DEMO_USERS)
+    database.execute(user_records.on_conflict_do_nothing(index_elements=[UserRecord.record_id]))
+    group_records = insert(AssignmentGroupRecord).values(DEMO_ASSIGNMENT_GROUPS)
+    database.execute(group_records.on_conflict_do_nothing(index_elements=[AssignmentGroupRecord.record_id]))
+
+
 def migrate_contract_lifecycle(database) -> None:
     """Bring persisted contracts forward without replacing customer-entered data."""
     current_date = datetime.now(UTC).date().isoformat()
@@ -236,6 +353,7 @@ def seed() -> None:
         for key, description in NOTICES:
             if not database.scalar(select(ApplicationSecretNotice).where(ApplicationSecretNotice.key == key)):
                 database.add(ApplicationSecretNotice(key=key, description=description))
+        seed_demo_identities(database)
         seed_incidents(database)
         seed_product_assets(database)
         database.commit()

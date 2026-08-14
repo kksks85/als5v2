@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, RepairExecutionRecord, SubcontractRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, QueryRecord, RepairExecutionRecord, SubcontractRecord, UserRecord
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -19,6 +19,7 @@ ALLOWED_RESOURCES = {
     "products",
     "product_assets",
     "incidents",
+    "queries",
     "knowledge_documents",
     "users",
     "assignment_groups",
@@ -40,6 +41,7 @@ RESOURCE_MODELS = {
     "products": ProductRecord,
     "product_assets": ProductAssetRecord,
     "incidents": IncidentRecord,
+    "queries": QueryRecord,
     "knowledge_documents": KnowledgeDocumentRecord,
     "users": UserRecord,
     "assignment_groups": AssignmentGroupRecord,
@@ -66,6 +68,7 @@ PRODUCT_MASTER_RESOURCES = {
     "mrls_products",
     "sme_ste_products",
     "gse_products",
+    "warranty_quality_claims",
 }
 
 
