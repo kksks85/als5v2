@@ -62,10 +62,72 @@ export const seedToolsProducts = createComponents('TLS', 'Tool Set', {
   material_serial_number: (product, component) => `TLS-${product}-MAT-${component}`,
 })
 
-export const seedMrlsProducts = createComponents('MRLS', 'MRLS Support System', {
-  batch_number: (product) => `MRLS-26-${product}`,
-  material_serial_number: (product, component) => `MRLS-${product}-MAT-${component}`,
+const mrlsAllocations = [
+  ['Indian Air Force', 'TASL-CTR-2026-001'],
+  ['Indian Army', 'TASL-CTR-2026-002'],
+  ['Indian Navy', 'TASL-CTR-2026-003'],
+  ['Indian Army Special Forces', 'TASL-CTR-2024-001'],
+  ['Indian Air Force', 'TASL-CTR-2023-001'],
+  ['Indian Navy', 'TASL-CTR-2022-001'],
+  ['Indian Army', 'TASL-CTR-2024-002'],
+  ['Indian Air Force', 'TASL-CTR-2025-001'],
+  ['Indian Army Special Forces', 'TASL-CTR-2026-004'],
+  ['Indian Navy', 'TASL-CTR-2025-002'],
+]
+const genericMrlsComponents = Array.from({ length: 30 }, (_, index) => {
+  const sequence = String(index + 1).padStart(3, '0')
+  const [customer, contract_number] = mrlsAllocations[index % mrlsAllocations.length]
+  const component = componentNames[index % componentNames.length]
+  return {
+    id: `mrls-component-${sequence}`,
+    product_serial_number: `MRLS-COMP-${sequence}`,
+    part_number: `MRLS-${component.slice(0, 3).toUpperCase()}-${sequence}`,
+    sap_part_number: `700${sequence}`,
+    material_description: component,
+    batch_number: `MRLS-26-${String(Math.floor(index / 10) + 1).padStart(2, '0')}`,
+    material_serial_number: `MRLS-${component.slice(0, 3).toUpperCase()}-${sequence}`,
+    customer,
+    contract_number,
+    quantity: '1',
+    unit_of_measurement: 'EA',
+    remarks: `Serialized MRLS spare allocated to ${customer} / ${contract_number}`,
+  }
 })
+const centerWingGimbalCameraSamples = mrlsAllocations.flatMap(([customer, contract_number], allocationIndex) => Array.from({ length: 2 }, (_, cameraIndex) => {
+  const sequence = String(allocationIndex * 2 + cameraIndex + 1).padStart(3, '0')
+  return {
+    id: `mrls-center-wing-gimbal-camera-${sequence}`,
+    product_serial_number: `MRLS-COMP-CWG-${sequence}`,
+    part_number: `CWG-CAM-${sequence}`,
+    sap_part_number: `CWGCAM${sequence}`,
+    material_description: 'Center Wing Gimbal Camera',
+    batch_number: `MRLS-CWG-26-${String(allocationIndex + 1).padStart(2, '0')}`,
+    material_serial_number: `CWG-CAM-${sequence}`,
+    customer,
+    contract_number,
+    quantity: '1',
+    unit_of_measurement: 'EA',
+    remarks: `Replacement test spare ${cameraIndex + 1} of 2 for ${customer} / ${contract_number}`,
+  }
+}))
+const centerWingPayloadCameraSamples = mrlsAllocations.flatMap(([customer, contract_number], allocationIndex) => Array.from({ length: 3 }, (_, cameraIndex) => {
+  const sequence = String(allocationIndex * 3 + cameraIndex + 1).padStart(3, '0')
+  return {
+    id: `mrls-center-wing-payload-camera-${sequence}`,
+    product_serial_number: `MRLS-COMP-CWP-${sequence}`,
+    part_number: `CWP-CAM-${sequence}`,
+    sap_part_number: `CWPCAM${sequence}`,
+    material_description: 'Center Wing Payload Camera',
+    batch_number: `MRLS-CWP-26-${String(allocationIndex + 1).padStart(2, '0')}`,
+    material_serial_number: `CWP-CAM-${sequence}`,
+    customer,
+    contract_number,
+    quantity: '1',
+    unit_of_measurement: 'EA',
+    remarks: `Replacement test spare ${cameraIndex + 1} of 3 for ${customer} / ${contract_number}`,
+  }
+}))
+export const seedMrlsProducts = [...genericMrlsComponents, ...centerWingGimbalCameraSamples, ...centerWingPayloadCameraSamples]
 
 export const seedSmeSteProducts = createComponents('SME', 'SME STE', {
   material_serial_number: (product, component) => `SME-${product}-MAT-${component}`,

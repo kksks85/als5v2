@@ -42,6 +42,20 @@ Open `http://localhost:5173`. The API runs only on the Docker network and is pro
 
 The API runs `alembic upgrade head` and initializes secret-handling notices before it starts. On the first connected application session, the dashboard migrates its current Customers, Contracts, Product Master, Incidents, Knowledge documents, Users, and Assignment Groups to their corresponding PostgreSQL tables. Thereafter it synchronizes edits and deletions to PostgreSQL.
 
+## Serialized component lifecycle
+
+The Component Lifecycle workspace is the authority for serialized UAV components. It maintains current UAV configuration, MRLS availability, replacement transactions, repair history, procurement receipt, and an audit trail. A replacement must reference an existing incident and atomically removes the failed serial, installs an MRLS-available compatible serial, updates the Product Master configuration projection, opens a repair record, and records each movement.
+
+After deploying the lifecycle migration, backfill only verified legacy serial numbers from inside the API container:
+
+```sh
+python scripts/backfill_component_lifecycle.py --report /tmp/component-lifecycle-exceptions.json
+```
+
+Review the exception report before operational use. Rows with missing/duplicate serials, missing component types, or duplicate active UAV positions are intentionally skipped and require data remediation; the command never invents serialized assets.
+
+Operational sequence: receive new component -> quality accept -> MRLS available -> incident replacement -> repair start -> repair complete -> quality accept -> MRLS available. Beyond-repair items are scrapped but permanently retain their movement and repair history.
+
 Useful commands:
 
 ```powershell

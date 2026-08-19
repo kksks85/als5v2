@@ -20,7 +20,7 @@ const columns = [
 
 const emptyForm = { name: '', number: '', address: '', primaryContact: { name: '', designation: '', email: '', phone: '', rank: '', site: '' }, contacts: [] }
 
-export default function CustomersPage({ customers, setCustomers }) {
+export default function CustomersPage({ customers, setCustomers, onCustomerRenamed }) {
   const [showForm, setShowForm] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [editingCustomer, setEditingCustomer] = useState(null)
@@ -47,7 +47,9 @@ export default function CustomersPage({ customers, setCustomers }) {
   }
 
   const updateCustomer = (form) => {
-    setCustomers((current) => current.map(c => c.id === editingCustomer.id ? { ...form, id: c.id } : c))
+    const updatedCustomer = { ...form, id: editingCustomer.id }
+    setCustomers((current) => current.map(c => c.id === editingCustomer.id ? updatedCustomer : c))
+    if (editingCustomer.name !== updatedCustomer.name) onCustomerRenamed?.(editingCustomer, updatedCustomer)
     setEditingCustomer(null)
   }
 

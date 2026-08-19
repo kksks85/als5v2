@@ -68,7 +68,7 @@ const columns = [
   { key: 'actions', label: 'Actions', width: 120, minWidth: 110 },
 ]
 
-export default function ProcessConfigurationPage({ assignmentGroups, repairExecutions, processes, setProcesses }) {
+export default function ProcessConfigurationPage({ assignmentGroups, repairExecutions, processes, setProcesses, onProcessRenamed }) {
   const [search, setSearch] = useState('')
   const [editingProcess, setEditingProcess] = useState(null)
   const [showForm, setShowForm] = useState(false)
@@ -106,6 +106,7 @@ export default function ProcessConfigurationPage({ assignmentGroups, repairExecu
   const saveProcess = (process) => {
     if (editingProcess) {
       setProcesses((current) => current.map((item) => item.id === editingProcess.id ? { ...process, id: item.id } : item))
+      onProcessRenamed?.(editingProcess, { ...process, id: editingProcess.id })
     } else {
       setProcesses((current) => [...current, { ...process, id: Math.max(...current.map((item) => item.id), 0) + 1 }])
     }

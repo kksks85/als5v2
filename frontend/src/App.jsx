@@ -17,6 +17,7 @@ import SubcontractsPage from './pages/SubcontractsPage'
 import ProductMasterPage, { seedProducts } from './pages/ProductMasterPage'
 import ProductMasterMcsPage from './pages/ProductMasterMcsPage'
 import ProductMasterGdtPage, { batteryProductColumns, gseProductColumns, mrlsProductColumns, simulatorProductColumns, smeSteProductColumns, tmvProductColumns, toolsProductColumns, warheadSamProductColumns } from './pages/ProductMasterGdtPage'
+import ComponentLifecyclePage from './pages/ComponentLifecyclePage'
 import ProductCategoryPage from './pages/ProductCategoryPage'
 import UserManagementPage, { initialUsers } from './pages/UserManagementPage'
 import AssignmentGroupsPage from './pages/AssignmentGroupsPage'
@@ -395,6 +396,66 @@ const defaultReports = [
     updatedAt: '2026-07-22T00:00:00.000Z',
   },
   {
+    id: 'report-csm-customer-incident-summary',
+    name: 'CSM customer incident summary',
+    source: 'Incidents',
+    filters: [],
+    visualization: 'customer-priority-matrix',
+    fields: incidentReportFields,
+    selectedFields: incidentReportFields,
+    groupBy: ['Customer', 'Priority'],
+    csmOnly: true,
+    createdBy: 'amitabh.sharma@aerofix.in',
+    createdByName: 'Amitabh Sharma',
+    sharedWith: [],
+    updatedAt: '2026-08-19T00:00:00.000Z',
+  },
+  {
+    id: 'report-csm-mail-priority-status',
+    name: 'CSM mail correspondence priority and status',
+    source: 'Mail correspondence',
+    filters: [],
+    visualization: 'mail-priority-status-matrix',
+    fields: ['Reference number', 'Dated', 'Subject', 'Priority', 'Assigned to', 'Label', 'Status', 'Due date'],
+    selectedFields: ['Reference number', 'Dated', 'Subject', 'Priority', 'Assigned to', 'Label', 'Status', 'Due date'],
+    groupBy: ['Priority', 'Status'],
+    csmOnly: true,
+    createdBy: 'amitabh.sharma@aerofix.in',
+    createdByName: 'Amitabh Sharma',
+    sharedWith: [],
+    updatedAt: '2026-08-19T00:00:00.000Z',
+  },
+  {
+    id: 'report-csm-query-customer-status',
+    name: 'CSM customer query status summary',
+    source: 'Queries',
+    filters: [],
+    visualization: 'query-customer-status-matrix',
+    fields: ['Query number', 'Customer', 'Query type', 'Priority', 'Assignment group', 'Status', 'Opened'],
+    selectedFields: ['Query number', 'Customer', 'Query type', 'Priority', 'Assignment group', 'Status', 'Opened'],
+    groupBy: ['Customer', 'Status'],
+    csmOnly: true,
+    createdBy: 'amitabh.sharma@aerofix.in',
+    createdByName: 'Amitabh Sharma',
+    sharedWith: [],
+    updatedAt: '2026-08-19T00:00:00.000Z',
+  },
+  {
+    id: 'report-my-calendar-schedule',
+    name: 'My calendar events',
+    source: 'Calendar events',
+    filters: [],
+    visualization: 'personal-calendar',
+    fields: ['Date', 'Note', 'Created by', 'Attachments'],
+    selectedFields: ['Date', 'Note', 'Created by', 'Attachments'],
+    groupBy: [],
+    csmOnly: true,
+    createdBy: 'amitabh.sharma@aerofix.in',
+    createdByName: 'Amitabh Sharma',
+    sharedWith: [],
+    updatedAt: '2026-08-19T00:00:00.000Z',
+  },
+  {
     id: 'report-open-incidents-aging',
     name: 'Open incidents older than 1 week and 1 month',
     source: 'Incidents',
@@ -411,6 +472,16 @@ const defaultReports = [
     updatedAt: '2026-07-22T00:00:00.000Z',
   },
 ]
+
+const reconcileBuiltInReports = (storedReports) => {
+  const defaultsById = new Map(defaultReports.map((report) => [report.id, report]))
+  return [
+    ...storedReports.map((report) => defaultsById.has(report.id)
+      ? { ...report, ...defaultsById.get(report.id), id: report.id }
+      : report),
+    ...defaultReports.filter((report) => !storedReports.some((item) => item.id === report.id)),
+  ]
+}
 
 function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpersonate, onStopImpersonating }) {
   const dashboardStorageKey = `als50-dashboard-${user.email}`
@@ -453,6 +524,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [mailCorrespondence, setMailCorrespondence] = useState([])
   const [calendarEvents, setCalendarEvents] = useState([])
   const [assignmentGroups, setAssignmentGroups] = useState(initialAssignmentGroups)
+  const [incidentCreationGroupIds, setIncidentCreationGroupIds] = useState([])
   const [users, setUsers] = useState(initialUsers)
   const [repairExecutions, setRepairExecutions] = useState(initialRepairExecutions)
   const [processes, setProcesses] = useState(() => getConfiguredProcesses())
@@ -482,7 +554,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const currentCollections = useRef({})
   const [reports, setReports] = useState(() => {
     const stored = JSON.parse(localStorage.getItem('als50-report-library') || '[]')
-    return [...stored, ...defaultReports.filter((report) => !stored.some((item) => item.id === report.id))]
+    return reconcileBuiltInReports(stored)
   })
   const [dashboardLayout, setDashboardLayout] = useState(() => {
     const stored = JSON.parse(localStorage.getItem(dashboardStorageKey) || '[]')
@@ -520,6 +592,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     }
     window.addEventListener('storage', synchronizeProcesses)
     return () => window.removeEventListener('storage', synchronizeProcesses)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    recordApi.list('system_settings').then((records) => {
+      const settings = records.find((record) => record.record_id === 'incident-creation-access')?.payload
+      if (active && Array.isArray(settings?.groupIds)) setIncidentCreationGroupIds(settings.groupIds.map(String))
+    }).catch(() => {})
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
@@ -638,6 +719,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       return JSON.stringify(reconciled) === JSON.stringify(current) ? current : reconciled
     })
   }, [categoryProducts, contracts, persistenceReady])
+
+  useEffect(() => {
+    if (!persistenceReady) return
+    setMrlsProducts((current) => {
+      const samples = seedMrlsProducts.filter((record) => ['Center Wing Gimbal Camera', 'Center Wing Payload Camera'].includes(record.material_description))
+      const missing = samples.filter((sample) => !current.some((record) => record.material_serial_number === sample.material_serial_number))
+      return missing.length ? [...current, ...missing] : current
+    })
+  }, [persistenceReady])
 
   useEffect(() => {
     if (!persistenceReady || !contracts.length) return
@@ -847,6 +937,64 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     }))
   }
 
+  const renameCustomerReferences = (previousCustomer, nextCustomer) => {
+    const previousName = previousCustomer.name
+    const nextName = nextCustomer.name
+    const replaceCustomer = (record) => record.customer === previousName ? { ...record, customer: nextName, customerId: nextCustomer.id } : record
+    const replaceIncidentCustomer = (incident) => ({
+      ...replaceCustomer(incident),
+      groupApproval: incident.groupApproval?.customer === previousName ? { ...incident.groupApproval, customer: nextName, customerId: nextCustomer.id } : incident.groupApproval,
+    })
+    setContracts((current) => current.map((contract) => contract.customer === previousName ? { ...contract, customer: nextName, customerId: nextCustomer.id } : contract))
+    setIncidents((current) => current.map(replaceIncidentCustomer))
+    setQueries((current) => current.map(replaceCustomer))
+    setSubcontracts((current) => current.map(replaceCustomer))
+    setMailCorrespondence((current) => current.map(replaceCustomer))
+    setProductAssets((current) => current.map(replaceCustomer))
+    setWarrantyQualityClaims((current) => current.map(replaceCustomer))
+    setMcsProducts((current) => current.map(replaceCustomer))
+    setGdtProducts((current) => current.map(replaceCustomer))
+    setMastProducts((current) => current.map(replaceCustomer))
+    setSimulatorProducts((current) => current.map(replaceCustomer))
+    setTmvProducts((current) => current.map(replaceCustomer))
+    setBatteryProducts((current) => current.map(replaceCustomer))
+    setWarheadSamProducts((current) => current.map(replaceCustomer))
+    setToolsProducts((current) => current.map(replaceCustomer))
+    setMrlsProducts((current) => current.map(replaceCustomer))
+    setSmeSteProducts((current) => current.map(replaceCustomer))
+    setGseProducts((current) => current.map(replaceCustomer))
+    if (selectedCustomer === previousName) setSelectedCustomer(nextName)
+  }
+
+  const renameAssignmentGroupReferences = (previousGroup, nextGroup) => {
+    if (!previousGroup || previousGroup.name === nextGroup.name) return
+    const previousName = previousGroup.name
+    const nextName = nextGroup.name
+    const replaceGroup = (record) => ({
+      ...record,
+      assignmentGroup: record.assignmentGroup === previousName ? nextName : record.assignmentGroup,
+      group: record.group === previousName ? nextName : record.group,
+      groupApproval: record.groupApproval?.assignmentGroup === previousName ? { ...record.groupApproval, assignmentGroup: nextName, assignmentGroupId: nextGroup.id } : record.groupApproval,
+    })
+    setIncidents((current) => current.map(replaceGroup))
+    setQueries((current) => current.map(replaceGroup))
+    setProcesses((current) => current.map((process) => process.assignmentGroup === previousName ? { ...process, assignmentGroup: nextName, assignmentGroupId: nextGroup.id } : process))
+    setRepairExecutions((current) => current)
+  }
+
+  const renameRepairExecutionReferences = (previousExecution, nextExecution) => {
+    if (!previousExecution || previousExecution.name === nextExecution.name) return
+    setIncidents((current) => current.map((incident) => incident.repairExecution === previousExecution.name ? { ...incident, repairExecution: nextExecution.name, repairExecutionId: nextExecution.id } : incident))
+    setProcesses((current) => current.map((process) => process.repairExecution === previousExecution.name ? { ...process, repairExecution: nextExecution.name, repairExecutionId: nextExecution.id } : process))
+  }
+
+  const renameProcessReferences = (previousProcess, nextProcess) => {
+    setIncidents((current) => current.map((incident) => {
+      if (incident.repairExecution !== previousProcess.repairExecution || incident.status !== previousProcess.status) return incident
+      return { ...incident, status: nextProcess.status, stage: incident.stage === previousProcess.status ? nextProcess.status : incident.stage, processId: nextProcess.id }
+    }))
+  }
+
   const saveReport = (definition, sharedWith = []) => {
     const existing = reports.find((report) => report.createdBy === user.email && report.name === definition.name && report.source === definition.source)
     const id = existing?.id || `report-${Date.now()}`
@@ -860,10 +1008,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const addReportToDashboard = (reportId) => setDashboardLayout((current) => current.some((item) => item.i === reportId) ? current : [...current, { i: reportId, x: 0, y: Infinity, w: 6, h: 4, minW: 3, minH: 3 }])
   const removeReportFromDashboard = (reportId) => setDashboardLayout((current) => current.filter((item) => item.i !== reportId))
 
-  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, subcontracts, mailCorrespondence, calendarEvents, repairExecutions, processes, notifications }
+  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, subcontracts, mailCorrespondence, calendarEvents, repairExecutions, processes, notifications, queries }
   const productCategories = getProductCategories(categoryProducts)
   const currentUserRecord = users.find((member) => member.email === user.email) || user
   const isAdministrator = String(currentUserRecord.role || user.role || '').toLowerCase() === 'administrator'
+  const saveIncidentCreationGroups = async (groupIds) => {
+    const normalizedGroupIds = [...new Set(groupIds.map(String))]
+    setIncidentCreationGroupIds(normalizedGroupIds)
+    await recordApi.bulkUpsert('system_settings', [{ record_id: 'incident-creation-access', payload: { groupIds: normalizedGroupIds } }])
+  }
   const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
   const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
   const resolveGroupApproval = async (incidentId, decision, reason) => {
@@ -932,6 +1085,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const currentUserGroupNames = assignmentGroups
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
     .map((group) => group.name)
+  const canCreateIncidents = isAdministrator || incidentCreationGroupIds.some((groupId) => currentUserGroupNames.some((groupName) => String(assignmentGroups.find((group) => group.name === groupName)?.id) === groupId))
   const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
   const hasWarrantyQualityClaimsAccess = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Advisory Group')
   const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
@@ -980,14 +1134,14 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
-      case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={() => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') }} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
+      case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
-      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} />
+      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} canCreateIncidents={canCreateIncidents} />
       case 'Query Management': return <QueryManagementPage queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} />
       case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} incidents={incidents} productCategories={productCategories} currentUser={user} />
-      case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} />
+      case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} onCustomerRenamed={renameCustomerReferences} />
       case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
@@ -1000,6 +1154,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
       case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
       case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+        case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} />
+      case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
       case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
       case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
       case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} />
@@ -1010,15 +1166,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         setEvents={setCalendarEvents}
         currentUser={currentUserRecord}
       />
-      case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
+      case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} canViewCsmReports={isAdministrator || isCustomerSupportManagementMember} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
       case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
-      case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} />
-      case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} />
+      case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} onGroupRenamed={renameAssignmentGroupReferences} />
+      case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} onRepairExecutionRenamed={renameRepairExecutionReferences} />
       case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
       case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
-      case 'Process configuration': return <ProcessConfigurationPage assignmentGroups={assignmentGroups} repairExecutions={repairExecutions} processes={processes} setProcesses={setProcesses} />
+      case 'Process configuration': return <ProcessConfigurationPage assignmentGroups={assignmentGroups} repairExecutions={repairExecutions} processes={processes} setProcesses={setProcesses} onProcessRenamed={renameProcessReferences} />
       case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} data={applicationData} />
-      case 'System settings': return <SystemSettingsPage />
+      case 'System settings': return <SystemSettingsPage assignmentGroups={assignmentGroups} incidentCreationGroupIds={incidentCreationGroupIds} onSaveIncidentCreationGroups={saveIncidentCreationGroups} />
       case 'Authentication settings': return <AuthenticationSettingsPage />
       default: return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} />
     }
@@ -1039,7 +1195,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
             if (key === 'Incidents') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
-              {incidentNavigationOpen && <div className="nav-submenu">{[{ label: 'Assigned to my group', scope: 'Assigned to my group' }, { label: 'Assigned to me', scope: 'Assigned to me' }].map((item) => <button key={item.scope} className={activePage === 'Incidents' && incidentDrill?.scope === item.scope ? 'active' : ''} onClick={() => { setIncidentDrill({ scope: item.scope, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{item.label}</span></button>)}</div>}
+              {incidentNavigationOpen && <div className="nav-submenu">{[{ label: 'Assigned to my group', scope: 'Assigned to my group' }, { label: 'Assigned to me', scope: 'Assigned to me' }].map((item) => <button key={item.scope} className={activePage === 'Incidents' && incidentDrill?.scope === item.scope ? 'active' : ''} onClick={() => { setIncidentDrill({ scope: item.scope, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{item.label}</span></button>)}<button className={activePage === 'Component repairs' ? 'active' : ''} onClick={() => { setActivePage('Component repairs'); setMobileNavigationOpen(false) }}><span>Components sent for repair</span></button></div>}
             </div>
             if (key === 'Approval center') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Approval center:') ? 'active' : ''}`} aria-expanded={approvalCenterOpen} onClick={() => setApprovalCenterOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={approvalCenterOpen ? 'expanded' : ''} /></button>

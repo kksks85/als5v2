@@ -8,7 +8,7 @@ const columns = [
   { key: 'status', label: 'Status', width: 140 },
 ]
 
-export default function RepairExecutionsPage({ repairExecutions, setRepairExecutions }) {
+export default function RepairExecutionsPage({ repairExecutions, setRepairExecutions, onRepairExecutionRenamed }) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState(null)
   const filtered = useMemo(() => repairExecutions.filter((execution) => !search || execution.name.toLowerCase().includes(search.toLowerCase())), [repairExecutions, search])
@@ -17,6 +17,7 @@ export default function RepairExecutionsPage({ repairExecutions, setRepairExecut
     event.preventDefault()
     const name = editing.name.trim()
     if (!name) return
+    const previous = repairExecutions.find((execution) => execution.id === editing.id)
     setRepairExecutions((current) => {
       const duplicate = current.some((execution) => execution.id !== editing.id && execution.name.toLowerCase() === name.toLowerCase())
       if (duplicate) return current
@@ -24,6 +25,7 @@ export default function RepairExecutionsPage({ repairExecutions, setRepairExecut
         ? current.map((execution) => execution.id === editing.id ? { ...editing, name } : execution)
         : [...current, { id: Math.max(0, ...current.map((execution) => execution.id)) + 1, name, active: true }]
     })
+    if (previous && previous.name !== name) onRepairExecutionRenamed?.(previous, { ...editing, name })
     setEditing(null)
   }
 

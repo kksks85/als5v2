@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
-import { createWorker } from 'tesseract.js'
 import { CheckCircle2, Download, FileSpreadsheet, Inbox, Mail, Paperclip, Pencil, Plus, Search, Send, Trash2, Upload, X } from 'lucide-react'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -122,8 +121,7 @@ const extractAttachmentText = async (file, onProgress) => {
       return content.items.map((item) => item.str).join(' ')
     }))
     const embeddedText = cleanLetterText(pages.join('\n'))
-    const scannedText = await extractScannedPdfText(pdfDocument, onProgress)
-    return { text: cleanLetterText([scannedText.text, embeddedText].filter(Boolean).join('\n')), headerText: scannedText.headerText }
+    return { text: embeddedText, headerText: '' }
   }
   if (file.type.startsWith('text/') || /\.(txt|csv|html?|eml)$/i.test(file.name)) return { text: cleanLetterText(await file.text()), headerText: '' }
   return { text: '', headerText: '' }

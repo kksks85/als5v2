@@ -9,6 +9,7 @@ const palette = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626
 export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords, onCreateIncident }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [nlpPanel, setNlpPanel] = useState(null)
+  const dashboardUser = data.users?.find((member) => member.email === user.email) || user
   const rowsBySource = useMemo(() => {
     const rows = createReportRows(data)
     if (!selectedCustomer || selectedCustomer === 'All customers') return rows
@@ -38,7 +39,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     <header className="dashboard-header">
       <div><h1>Dashboard</h1>{selectedCustomer !== 'All customers' && <span className="dash-filter-badge">{selectedCustomer}</span>}</div>
       <div className="dashboard-actions">
-        <button className="compact-button primary" onClick={onCreateIncident}><Plus size={14} /> Create incident</button>
+        {onCreateIncident && <button className="compact-button primary" onClick={onCreateIncident}><Plus size={14} /> Create incident</button>}
         <button className="compact-button secondary" onClick={() => setPickerOpen(true)}><Plus size={14} /> Add tile</button>
       </div>
     </header>
@@ -68,7 +69,7 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
               <button className="icon-button subtle" onClick={() => onRemoveReport(report.id)} aria-label={`Remove ${report.name}`} title="Remove"><X size={14} /></button>
             </div>
           </header>
-          <DashboardReport report={report} result={result} onOpen={() => onOpenReport(report.id)} onOpenGroup={(group) => onOpenRecords?.({
+          <DashboardReport report={report} result={report.visualization === 'personal-calendar' ? { rows: (data.calendarEvents || []).filter((event) => [event.createdByUserId, event.createdBy, event.createdByEmail].some((value) => String(value || '').toLowerCase() === String(dashboardUser.id || dashboardUser.name || dashboardUser.email).toLowerCase()) || String(event.createdBy || '').toLowerCase() === String(dashboardUser.name || '').toLowerCase()).map((event) => ({ Date: event.date || event.createdAt?.slice(0, 10) || '--', Note: event.note || '--', 'Created by': event.createdBy || '--', Attachments: String(event.attachments?.length || 0) })), groups: [] } : result} customers={data.customers} onOpen={() => onOpenReport(report.id)} onOpenGroup={(group) => onOpenRecords?.({
             source: report.source,
             label: group.label,
             recordIds: result.rows.filter((row) => Object.entries(group.values).every(([field, value]) => String(row[field] || 'Unspecified') === value)).map((row) => row.Number || row['Serial number']).filter(Boolean),
@@ -120,11 +121,36 @@ function DashboardStreamingPromptGuide({ prompt, catalog }) {
   return <div className="dashboard-nlp-guide" aria-live="polite"><Sparkles size={14} /><span>{visibleGuide}<i /></span></div>
 }
 
-function DashboardReport({ report, result, onOpen, onOpenGroup }) {
+function DashboardReport({ report, result, customers = [], onOpen, onOpenGroup }) {
   const { rows, groups } = result
   const fields = report.selectedFields?.length ? report.selectedFields : report.fields || Object.keys(rows[0] || {}).slice(0, 5)
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 8
+  if (report.visualization === 'customer-priority-matrix') {
+    const priorities = ['Critical', 'High', 'Medium', 'Low']
+    const customerIds = [...new Set([...customers.map((customer) => String(customer.id)), ...rows.map((row) => row['Customer ID']).filter(Boolean)])]
+    return <div className="dashboard-report-table"><div className="dashboard-table-scroll dash-clickable" onClick={onOpen}><table><thead><tr><th>Customer</th><th>Total</th>{priorities.map((priority) => <th key={priority}>{priority}</th>)}</tr></thead><tbody>{customerIds.map((customerId) => { const customerRows = rows.filter((row) => String(row['Customer ID']) === String(customerId)); const customer = customers.find((item) => String(item.id) === String(customerId)); return <tr key={customerId}><td>{customer?.name || customerRows[0]?.Customer || '--'}</td><td>{customerRows.length}</td>{priorities.map((priority) => <td key={priority}>{customerRows.filter((row) => row.Priority === priority).length}</td>)}</tr> })}{!customerIds.length && <tr><td colSpan="6">No customer data.</td></tr>}</tbody></table></div></div>
+  }
+  if (report.visualization === 'mail-priority-status-matrix') {
+    const priorities = ['Critical', 'High', 'Medium', 'Low']
+    const statuses = [...new Set(rows.map((row) => row.Status).filter(Boolean))].sort((left, right) => left.localeCompare(right))
+    return <div className="dashboard-report-table"><div className="dashboard-table-scroll dash-clickable" onClick={onOpen}><table><thead><tr><th>Criticality</th><th>Total</th>{statuses.map((status) => <th key={status}>{status}</th>)}</tr></thead><tbody>{priorities.map((priority) => { const priorityRows = rows.filter((row) => row.Priority === priority); return <tr key={priority}><td>{priority}</td><td>{priorityRows.length}</td>{statuses.map((status) => <td key={status}>{priorityRows.filter((row) => row.Status === status).length}</td>)}</tr> })}{!statuses.length && <tr><td colSpan="2">No correspondence data.</td></tr>}</tbody></table></div></div>
+  }
+  if (report.visualization === 'query-customer-status-matrix') {
+    const statuses = ['Open', 'Pending', 'Resolved', 'Closed']
+    const customerIds = [...new Set([...customers.map((customer) => String(customer.id)), ...rows.map((row) => row['Customer ID']).filter(Boolean)])]
+    return <div className="dashboard-report-table"><div className="dashboard-table-scroll dash-clickable" onClick={onOpen}><table><thead><tr><th>Customer</th><th>Total</th>{statuses.map((status) => <th key={status}>{status}</th>)}</tr></thead><tbody>{customerIds.map((customerId) => { const customerRows = rows.filter((row) => String(row['Customer ID']) === String(customerId)); const customer = customers.find((item) => String(item.id) === String(customerId)); return <tr key={customerId}><td>{customer?.name || customerRows[0]?.Customer || '--'}</td><td>{customerRows.length}</td>{statuses.map((status) => <td key={status}>{customerRows.filter((row) => row.Status === status).length}</td>)}</tr> })}{!customerIds.length && <tr><td colSpan="6">No query data.</td></tr>}</tbody></table></div></div>
+  }
+  if (report.visualization === 'personal-calendar') {
+    const eventMap = rows.reduce((result, row) => { const date = String(row.Date || '').slice(0, 10); if (date) (result[date] ||= []).push(row); return result }, {})
+    const dates = Object.keys(eventMap).sort()
+    const anchor = dates.length ? new Date(`${dates[0]}T00:00:00`) : new Date()
+    const month = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+    const offset = (month.getDay() + 6) % 7
+    const start = new Date(month.getFullYear(), month.getMonth(), 1 - offset)
+    const days = Array.from({ length: 42 }, (_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index))
+    return <div className="dashboard-calendar-grid" onClick={onOpen}><header>{month.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}</header><div>{days.map((day) => { const key = day.toISOString().slice(0, 10); const events = eventMap[key] || []; return <article key={key} className={day.getMonth() === month.getMonth() ? '' : 'outside'}><span>{day.getDate()}</span>{events.slice(0, 2).map((event, index) => <small key={`${key}-${index}`}>{event.Note}</small>)}</article> })}</div></div>
+  }
   if (report.visualization === 'table') {
     const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
     const safePage = Math.min(page, totalPages)
@@ -139,5 +165,12 @@ function DashboardReport({ report, result, onOpen, onOpenGroup }) {
   const visibleGroups = groups.slice(0, 20)
   const maximum = Math.max(1, ...visibleGroups.map((group) => group.value))
   if (!groups.length) return <div className="dashboard-report-empty dash-clickable" onClick={onOpen}><BarChart3 size={18} /><p>No data – click to open report</p></div>
+  if (report.visualization === 'pie') {
+    const total = visibleGroups.reduce((sum, group) => sum + group.value, 0)
+    let running = 0
+    const stops = visibleGroups.map((group, index) => { const start = running / total * 100; running += group.value; return `${palette[index % palette.length]} ${start}% ${running / total * 100}%` }).join(', ')
+    return <div className="dashboard-pie-chart"><div className="dashboard-pie-ring" style={{ background: `conic-gradient(${stops})` }}><b>{total}</b></div><div>{visibleGroups.slice(0, 5).map((group, index) => <button key={group.label} onClick={() => onOpenGroup(group)}><i style={{ background: palette[index % palette.length] }} />{group.label}<b>{group.value}</b></button>)}</div></div>
+  }
+  if (report.visualization === 'line') return <div className="dashboard-line-chart">{visibleGroups.slice(0, 12).map((group, index) => <button key={group.label} style={{ height: `${Math.max(12, group.value / maximum * 100)}%` }} title={`${group.label}: ${group.value}`} onClick={() => onOpenGroup(group)}><i style={{ background: palette[index % palette.length] }} /><small>{group.label}</small><b>{group.value}</b></button>)}</div>
   return <div className="dashboard-mini-chart"><div className="dashboard-bars">{visibleGroups.map((group, index) => <button type="button" className="dashboard-bar-drill" key={group.label} title={`Open ${group.value} records for ${group.label}`} onClick={() => onOpenGroup(group)}><small title={group.label}>{group.label}</small><span><i style={{ width: `${group.value / maximum * 100}%`, background: palette[index % palette.length] }} /></span><b>{group.value}</b></button>)}</div></div>
 }

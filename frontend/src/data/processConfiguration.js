@@ -111,8 +111,13 @@ export const getConfiguredProcesses = () => {
 
 export const getProcessStages = (repairExecution, processes = getConfiguredProcesses()) => {
   const seenStatuses = new Set()
-  return processes
-    .filter((process) => process.repairExecution === repairExecution)
+  const exactStages = processes.filter((process) => process.repairExecution === repairExecution)
+  const resolvedStages = exactStages.length
+    ? exactStages
+    : repairExecution === 'Repair at Factory'
+      ? initialProcesses.filter((process) => process.repairExecution === 'Repair at Factory')
+      : []
+  return resolvedStages
     .sort((first, second) => first.order - second.order)
     .filter((process) => !seenStatuses.has(process.status) && seenStatuses.add(process.status))
     .map((process, index) => ({ ...process, order: index + 1 }))

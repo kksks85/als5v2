@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
-import { createWorker } from 'tesseract.js'
 import { ArrowLeft, Edit2, Eye, FileText, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { notificationApi } from '../data/api'
 
@@ -55,21 +54,7 @@ const extractPdfText = async (file, onProgress) => {
     return [...rows.entries()].sort(([first], [second]) => second - first).map(([, items]) => items.sort((first, second) => first.x - second.x).map((item) => item.text).join(' | ')).join('\n')
   }))
   const text = pages.join('\n').replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-  if (text) return text
-  const worker = await createWorker('eng', 1, { logger: ({ status, progress }) => onProgress(`OCR: ${status}${progress ? ` (${Math.round(progress * 100)}%)` : ''}`) })
-  try {
-    const scannedPages = []
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: 2 })
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.ceil(viewport.width)
-      canvas.height = Math.ceil(viewport.height)
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-      scannedPages.push((await worker.recognize(canvas.toDataURL('image/png'))).data.text)
-    }
-    return scannedPages.join('\n').trim()
-  } finally { await worker.terminate() }
+  return text
 }
 
 const detectPackageInclusions = (text) => {

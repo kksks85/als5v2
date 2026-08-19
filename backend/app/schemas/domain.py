@@ -33,6 +33,75 @@ class IncidentStatus(StrEnum):
     CLOSED = "closed"
 
 
+class ComponentLifecycleStatus(StrEnum):
+    NEW = "new"
+    RECEIVED = "received"
+    QUALITY_CHECK = "quality_check"
+    MRLS_AVAILABLE = "mrls_available"
+    ISSUED_FOR_REPLACEMENT = "issued_for_replacement"
+    INSTALLED = "installed"
+    FAILED = "failed"
+    SENT_FOR_REPAIR = "sent_for_repair"
+    UNDER_REPAIR = "under_repair"
+    REPAIRED = "repaired"
+    BEYOND_REPAIR = "beyond_repair"
+    SCRAPPED = "scrapped"
+
+
+class ComponentLocationType(StrEnum):
+    MRLS = "mrls"
+    UAV = "uav"
+    REPAIR_FACILITY = "repair_facility"
+    SCRAP = "scrap"
+    RECEIVING = "receiving"
+
+
+class ComponentReplacementCreate(BaseModel):
+    transaction_id: str = Field(min_length=1, max_length=160)
+    incident_record_id: str = Field(min_length=1, max_length=160)
+    uav_serial_number: str = Field(min_length=1, max_length=160)
+    component_position: str = Field(min_length=1, max_length=160)
+    failed_component_serial: str = Field(min_length=1, max_length=160)
+    replacement_component_serial: str = Field(min_length=1, max_length=160)
+    reason: str = Field(min_length=1, max_length=5000)
+    technician: str = Field(min_length=1, max_length=180)
+    customer: str | None = Field(default=None, max_length=180)
+    site: str | None = Field(default=None, max_length=180)
+    failure_date: datetime
+    technician_diagnosis: str | None = Field(default=None, max_length=5000)
+    repair_request: str | None = Field(default=None, max_length=5000)
+
+
+class ComponentReceiptCreate(BaseModel):
+    serial_number: str = Field(min_length=1, max_length=160)
+    component_type: str = Field(min_length=1, max_length=160)
+    subsystem: str | None = Field(default=None, max_length=160)
+    part_number: str | None = Field(default=None, max_length=160)
+    sap_part_number: str | None = Field(default=None, max_length=160)
+    purchase_order_number: str | None = Field(default=None, max_length=160)
+    supplier: str | None = Field(default=None, max_length=180)
+    customer: str = Field(min_length=1, max_length=180)
+    contract_number: str = Field(min_length=1, max_length=160)
+    received_by: str = Field(min_length=1, max_length=180)
+    notes: str | None = Field(default=None, max_length=5000)
+
+
+class ComponentQualityDecision(BaseModel):
+    performed_by: str = Field(min_length=1, max_length=180)
+    accepted: bool
+    notes: str | None = Field(default=None, max_length=5000)
+
+
+class ComponentRepairUpdate(BaseModel):
+    performed_by: str = Field(min_length=1, max_length=180)
+    technician_diagnosis: str | None = Field(default=None, max_length=5000)
+    repair_request: str | None = Field(default=None, max_length=5000)
+    repair_cost: float | None = Field(default=None, ge=0)
+    replacement_parts: list[dict[str, Any]] = Field(default_factory=list)
+    repair_outcome: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=5000)
+
+
 class Address(BaseModel):
     line_1: str = Field(min_length=1, max_length=200)
     line_2: str | None = Field(default=None, max_length=200)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,115 @@ class ProductAssetRecord(RecordMixin, Base):
     __tablename__ = "product_assets"
 
 
+class ComponentInstance(Base):
+    __tablename__ = "component_instances"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    serial_number: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    component_type: Mapped[str] = mapped_column(String(160), index=True)
+    subsystem: Mapped[str | None] = mapped_column(String(160))
+    part_number: Mapped[str | None] = mapped_column(String(160))
+    sap_part_number: Mapped[str | None] = mapped_column(String(160))
+    lifecycle_status: Mapped[str] = mapped_column(String(40), index=True)
+    location_type: Mapped[str] = mapped_column(String(40), index=True)
+    location_reference: Mapped[str | None] = mapped_column(String(160), index=True)
+    customer: Mapped[str | None] = mapped_column(String(180), index=True)
+    contract_number: Mapped[str | None] = mapped_column(String(160), index=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ComponentInstallation(Base):
+    __tablename__ = "component_installations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), index=True)
+    uav_serial_number: Mapped[str] = mapped_column(String(160), index=True)
+    component_position: Mapped[str] = mapped_column(String(160), index=True)
+    customer: Mapped[str | None] = mapped_column(String(180))
+    site: Mapped[str | None] = mapped_column(String(180))
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    removal_reason: Mapped[str | None] = mapped_column(Text)
+    incident_record_id: Mapped[str | None] = mapped_column(String(160), index=True)
+
+
+class ComponentMovement(Base):
+    __tablename__ = "component_movements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), index=True)
+    from_status: Mapped[str | None] = mapped_column(String(40))
+    to_status: Mapped[str] = mapped_column(String(40), index=True)
+    from_location_type: Mapped[str | None] = mapped_column(String(40))
+    to_location_type: Mapped[str] = mapped_column(String(40), index=True)
+    from_location_reference: Mapped[str | None] = mapped_column(String(160))
+    to_location_reference: Mapped[str | None] = mapped_column(String(160))
+    reason: Mapped[str] = mapped_column(Text)
+    transaction_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    incident_record_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    performed_by: Mapped[str] = mapped_column(String(180))
+    customer: Mapped[str | None] = mapped_column(String(180))
+    site: Mapped[str | None] = mapped_column(String(180))
+    moved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ComponentRepair(Base):
+    __tablename__ = "component_repairs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), index=True)
+    incident_record_id: Mapped[str] = mapped_column(String(160), index=True)
+    previous_uav_serial_number: Mapped[str | None] = mapped_column(String(160))
+    failure_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    failure_description: Mapped[str] = mapped_column(Text)
+    technician_diagnosis: Mapped[str | None] = mapped_column(Text)
+    repair_request: Mapped[str | None] = mapped_column(Text)
+    repair_status: Mapped[str] = mapped_column(String(40), index=True)
+    repair_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    repair_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    repair_outcome: Mapped[str | None] = mapped_column(String(80))
+    repair_cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    replacement_parts: Mapped[dict] = mapped_column(JSONB, default=list)
+    final_disposition: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ComponentReplacement(Base):
+    __tablename__ = "component_replacements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    incident_record_id: Mapped[str] = mapped_column(String(160), index=True)
+    uav_serial_number: Mapped[str] = mapped_column(String(160), index=True)
+    component_position: Mapped[str] = mapped_column(String(160))
+    removed_component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), index=True)
+    installed_component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    technician: Mapped[str] = mapped_column(String(180))
+    customer: Mapped[str | None] = mapped_column(String(180))
+    site: Mapped[str | None] = mapped_column(String(180))
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ComponentProcurement(Base):
+    __tablename__ = "component_procurements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    component_id: Mapped[int] = mapped_column(ForeignKey("component_instances.id"), unique=True, index=True)
+    purchase_order_number: Mapped[str | None] = mapped_column(String(160), index=True)
+    supplier: Mapped[str | None] = mapped_column(String(180))
+    customer: Mapped[str | None] = mapped_column(String(180), index=True)
+    contract_number: Mapped[str | None] = mapped_column(String(160), index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    quality_status: Mapped[str] = mapped_column(String(40), index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_by: Mapped[str] = mapped_column(String(180))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 class IncidentRecord(RecordMixin, Base):
     __tablename__ = "incidents"
 
@@ -80,6 +189,10 @@ class RepairExecutionRecord(RecordMixin, Base):
 
 class ProcessConfigurationRecord(RecordMixin, Base):
     __tablename__ = "process_configurations"
+
+
+class SystemSettingsRecord(RecordMixin, Base):
+    __tablename__ = "system_settings"
 
 
 class EmailSettingsRecord(RecordMixin, Base):

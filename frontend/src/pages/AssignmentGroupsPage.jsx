@@ -15,7 +15,7 @@ const columns = [
 
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
 
-export default function AssignmentGroupsPage({ groups, setGroups, users }) {
+export default function AssignmentGroupsPage({ groups, setGroups, users, onGroupRenamed }) {
   const [search, setSearch] = useState('')
   const [visibleColumns, setVisibleColumns] = useState(columns.map(({ key }) => key))
   const [showColumns, setShowColumns] = useState(false)
@@ -55,9 +55,11 @@ export default function AssignmentGroupsPage({ groups, setGroups, users }) {
     event.preventDefault()
     if (!newGroup.name.trim()) return
     const date = '22 Jul 2026'
+    const updatedGroup = editingGroupId ? { ...groups.find((group) => group.id === editingGroupId), ...newGroup, name: newGroup.name.trim(), description: newGroup.description.trim(), members: newGroup.memberIds.length, updated: date } : null
     setGroups((current) => editingGroupId
-      ? current.map((group) => group.id === editingGroupId ? { ...group, ...newGroup, name: newGroup.name.trim(), description: newGroup.description.trim(), members: newGroup.memberIds.length, updated: date } : group)
+      ? current.map((group) => group.id === editingGroupId ? updatedGroup : group)
       : [...current, { id: Math.max(0, ...current.map((group) => group.id)) + 1, ...newGroup, name: newGroup.name.trim(), description: newGroup.description.trim(), members: newGroup.memberIds.length, created: date, updated: date, active: true }])
+    if (updatedGroup?.name !== groups.find((group) => group.id === editingGroupId)?.name) onGroupRenamed?.(groups.find((group) => group.id === editingGroupId), updatedGroup)
     setNewGroup({ name: '', manager: '', description: '', memberIds: [] })
     setEditingGroupId(null)
     setShowCreateForm(false)

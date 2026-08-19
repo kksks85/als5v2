@@ -12,6 +12,7 @@ export const reportCatalog = [
   { key: 'Repair executions', label: 'Repair executions', description: 'Configured repair execution paths and workflow ownership', roles: ['Administrator', 'Manager'], fields: ['Name', 'Description', 'Status'] },
   { key: 'Process configurations', label: 'Process configurations', description: 'Repair workflow process definitions and configured stages', roles: ['Administrator'], fields: ['Process', 'Stage count', 'Status'] },
   { key: 'Notifications', label: 'Notifications', description: 'Operational notifications, recipients, status, and creation time', roles: ['Administrator', 'Manager'], fields: ['Notification ID', 'Message', 'Recipient', 'Read status', 'Created'] },
+  { key: 'Queries', label: 'Queries', description: 'Customer queries, assignment, criticality, and response status', roles: ['Administrator', 'Manager', 'Service engineer'], fields: ['Query number', 'Customer', 'Query type', 'Priority', 'Assignment group', 'Status', 'Opened'] },
 ]
 
 const productCategoryReportFields = ['Serial number', 'Contract number', 'Customer', 'Delivered on', 'Warranty / coverage', 'Warranty expiry', 'Warranty status', 'Last serviced', 'Service due', 'Service due period']
@@ -78,8 +79,12 @@ const serviceDueDate = (lastServiced) => {
   return date ? addDays(date, 90).toISOString().slice(0, 10) : ''
 }
 
-export const createReportRows = ({ customers, incidents, contracts, products, productAssets = [], knowledgeDocuments, users, assignmentGroups, subcontracts = [], mailCorrespondence = [], calendarEvents = [], repairExecutions = [], processes = [], notifications = [] }) => ({
-  Incidents: incidents.map((incident) => { const days = ageDays(incident.opened); return { Number: incident.id, 'Short description': incident.title, Customer: incident.customer || '--', Priority: incident.priority, State: incident.state, 'Assignment group': incident.group, Opened: incident.opened, 'Age days': days, 'Age bucket': ageBucket(days), Resolved: ['Resolved', 'Closed'].includes(incident.state) ? incident.opened : '--' } }),
+export const createReportRows = ({ customers, incidents, contracts, products, productAssets = [], knowledgeDocuments, users, assignmentGroups, subcontracts = [], mailCorrespondence = [], calendarEvents = [], repairExecutions = [], processes = [], notifications = [], queries = [] }) => {
+  const customerByContract = new Map(contracts.map((contract) => [contract.number, contract]))
+  const customerByName = new Map(customers.map((customer) => [customer.name, customer]))
+  const customerIdFor = (record) => record.customerId || customerByContract.get(record.contract || record.contractNumber)?.customerId || customerByName.get(record.customer)?.id || ''
+  return {
+  Incidents: incidents.map((incident) => { const days = ageDays(incident.opened); return { Number: incident.id, 'Short description': incident.title, Customer: incident.customer || '--', 'Customer ID': String(customerIdFor(incident) || ''), Priority: incident.priority, State: incident.state, 'Assignment group': incident.group, Opened: incident.opened, 'Age days': days, 'Age bucket': ageBucket(days), Resolved: ['Resolved', 'Closed'].includes(incident.state) ? incident.opened : '--' } }),
   Customers: customers.map((customer) => ({ 'Customer name': customer.name, Service: customer.primaryContact?.designation || '--', 'Primary contact': customer.primaryContact?.name || '--', Site: customer.primaryContact?.site || '--', Status: 'Active', Created: customer.created || '--' })),
   Contracts: contracts.map((contract) => ({ 'Contract number': contract.number, Customer: contract.customer, 'Coverage type': contract.coverage?.join(', ') || 'No coverage', Status: contract.status, 'Start date': dateLabel(contract.signed), 'End date': dateLabel(contract.expiryDate) })),
   Products: products.map((product) => ({ 'Product serial': product.product_serial_number, System: product.product_category, Assembly: product.route_card_description, 'Sub-system': product.subsystems || '--', Status: 'Active' })),
@@ -106,7 +111,8 @@ export const createReportRows = ({ customers, incidents, contracts, products, pr
   'Repair executions': repairExecutions.map((execution) => ({ Name: execution.name || execution.id || '--', Description: execution.description || '--', Status: execution.active === false ? 'Inactive' : 'Active' })),
   'Process configurations': processes.map((process) => ({ Process: process.name || process.repairExecution || process.id || '--', 'Stage count': String(process.stages?.length || 0), Status: process.active === false ? 'Inactive' : 'Active' })),
   Notifications: notifications.map((notification) => ({ 'Notification ID': notification.id || '--', Message: notification.message || notification.title || '--', Recipient: notification.recipientName || notification.recipientUserId || '--', 'Read status': notification.read ? 'Read' : 'Unread', Created: dateLabel(notification.createdAt || notification.created) })),
-})
+  Queries: queries.map((query) => ({ 'Query number': query.id || '--', Customer: query.customer || '--', 'Customer ID': String(customerIdFor(query) || ''), 'Query type': query.queryType === 'Others' ? query.temporaryQueryCategory || 'Others' : query.queryType || '--', Priority: query.priority || 'Medium', 'Assignment group': query.assignmentGroup || '--', Status: query.status || 'Open', Opened: query.opened || '--' })),
+}}
 
 export const matchesReportFilter = (row, filter) => {
   const rawValue = row[filter.field]
@@ -151,33 +157,91 @@ export const runReportDefinition = (definition, rowsBySource) => {
   return { rows, groups }
 }
 
+const sourceAliases = {
+  Incidents: ['incident', 'issue', 'ticket', 'case', 'fault'],
+  Customers: ['customer', 'client', 'account', 'contact', 'site'],
+  Contracts: ['contract', 'agreement', 'coverage', 'entitlement'],
+  Products: ['product', 'material', 'inventory', 'serial', 'assembly', 'subsystem', 'equipment'],
+  Knowledge: ['knowledge', 'manual', 'bulletin', 'document', 'article', 'procedure'],
+  Users: ['user', 'login', 'employee', 'role', 'staff', 'engineer'],
+  'Assignment groups': ['assignment group', 'support group', 'team roster', 'team membership', 'team'],
+  Subcontracts: ['subcontract', 'sub-contract', 'amc', 'cmc', 'vendor coverage'],
+  'Mail correspondence': ['mail', 'letter', 'correspondence', 'inbox', 'outbox'],
+  'Calendar events': ['calendar', 'event', 'meeting', 'reminder', 'schedule'],
+  'Repair executions': ['repair execution', 'repair process', 'repair path'],
+  'Process configurations': ['process configuration', 'workflow stage', 'workflow'],
+  Notifications: ['notification', 'alert', 'notice'],
+}
+
+const fieldAliases = {
+  status: ['state', 'status', 'condition'],
+  customer: ['customer', 'client', 'account'],
+  'customer name': ['customer', 'client', 'account', 'name'],
+  'assignment group': ['assignment group', 'support group', 'team'],
+  'group name': ['group', 'team', 'assignment group'],
+  'due date': ['due', 'deadline', 'overdue'],
+  'service due': ['service due', 'maintenance due', 'due service'],
+  'service due period': ['service due', 'maintenance due', 'overdue'],
+  'warranty expiry': ['warranty expiry', 'warranty expiration', 'warranty expires', 'expiring warranty'],
+  'valid to': ['valid to', 'expiry', 'expiration', 'expires'],
+  'end date': ['end date', 'expiry', 'expiration', 'expires'],
+  'read status': ['read', 'unread', 'seen'],
+  recipient: ['recipient', 'recipient name', 'recipient user'],
+  'assigned to': ['assigned to', 'assignee', 'owner'],
+  owner: ['owner', 'author'],
+  'created by': ['created by', 'author'],
+  priority: ['priority', 'urgent', 'critical'],
+}
+
+const matchesPhrase = (phrase, value) => new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`).test(phrase)
+const findFieldFromPhrase = (phrase, fields) => fields.find((field) => {
+  const aliases = [field.toLowerCase(), ...(fieldAliases[field.toLowerCase()] || [])]
+  return aliases.some((alias) => matchesPhrase(phrase, alias))
+})
+const availableSource = (key, allowedCatalog) => allowedCatalog.some((table) => table.key === key) ? key : null
+
 const sourceFromPrompt = (phrase, allowedCatalog) => {
   const requestedTable = [...allowedCatalog].sort((left, right) => right.key.length - left.key.length).find((table) => {
     const aliases = [table.key, table.label, table.key.replaceAll(' ', ''), table.label.replaceAll(' ', '')]
     return aliases.some((alias) => new RegExp(`\\b${alias.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(phrase))
   })
   if (requestedTable) return requestedTable.key
-  if (/(mail|letter|correspondence)/.test(phrase)) return 'Mail correspondence'
-  if (/(calendar|event|meeting|reminder)/.test(phrase)) return 'Calendar events'
-  if (/(subcontract|sub-contract|amc|cmc)/.test(phrase)) return 'Subcontracts'
-  if (/(repair execution|repair process)/.test(phrase)) return 'Repair executions'
-  if (/(process configuration|workflow stage|workflow)/.test(phrase)) return 'Process configurations'
-  if (/(notification|alert)/.test(phrase)) return 'Notifications'
-  if (/(assignment group|support group|team roster|team membership)/.test(phrase)) return 'Assignment groups'
-  if (/(user|login|employee|role)/.test(phrase)) return 'Users'
-  if (/(knowledge|manual|bulletin|document|article)/.test(phrase)) return 'Knowledge'
-  if (/(contract|coverage|warranty|amc|cmc)/.test(phrase)) return 'Contracts'
-  if (/(product|material|inventory|serial|assembly|subsystem)/.test(phrase)) return 'Products'
-  if (/(customer|contact|site)/.test(phrase) && !/incident/.test(phrase)) return 'Customers'
+  const matchedSource = Object.entries(sourceAliases).find(([, aliases]) => aliases.some((alias) => matchesPhrase(phrase, alias)))?.[0]
+  if (matchedSource && availableSource(matchedSource, allowedCatalog)) return matchedSource
   return 'Incidents'
 }
 
-const fieldFromPhrase = (phrase, fields) => fields.find((field) => phrase.includes(field.toLowerCase()))
+const fieldFromPhrase = (phrase, fields) => findFieldFromPhrase(phrase, fields)
 const groupFieldsFromPhrase = (phrase, fields) => {
-  const requested = fields.filter((field) => new RegExp(`\\bby\\s+${field.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(phrase))
+  const requested = fields.filter((field) => {
+    const aliases = [field.toLowerCase(), ...(fieldAliases[field.toLowerCase()] || [])]
+    return aliases.some((alias) => new RegExp(`\\bby\\s+${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`).test(phrase))
+  })
   if (requested.length) return requested.slice(0, 2)
   const afterBy = phrase.match(/\bby\s+(.+?)(?:\s+as\s+|\s+(?:bar|chart|list|table|trend|donut|pie)|$)/)?.[1] || ''
-  return fields.filter((field) => afterBy.includes(field.toLowerCase())).slice(0, 2)
+  return fields.filter((field) => findFieldFromPhrase(afterBy, [field])).slice(0, 2)
+}
+
+const futureDate = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+const today = () => new Date().toISOString().slice(0, 10)
+const addGenericFilters = (phrase, table, addFilter) => {
+  const statusField = table.fields.find((field) => field.toLowerCase() === 'status')
+  const readStatusField = table.fields.find((field) => field.toLowerCase() === 'read status')
+  const requestedStatus = ['draft', 'published', 'active', 'inactive', 'pending', 'completed', 'unread', 'read'].find((status) => matchesPhrase(phrase, status))
+  if (readStatusField && requestedStatus && ['read', 'unread'].includes(requestedStatus)) addFilter(readStatusField, 'is', requestedStatus[0].toUpperCase() + requestedStatus.slice(1))
+  else if (statusField && requestedStatus) addFilter(statusField, 'is', requestedStatus[0].toUpperCase() + requestedStatus.slice(1))
+
+  const dateField = findFieldFromPhrase(phrase, table.fields.filter((field) => /date|expiry|valid|due|serviced|created|updated/i.test(field)))
+  if (dateField && /(overdue|expired|past due)/.test(phrase)) addFilter(dateField, 'before', today())
+  else if (dateField && /(this month|next 30 days|within (the )?next month|expiring soon)/.test(phrase)) addFilter(dateField, 'before', futureDate(31))
+  else if (dateField && /(next 7 days|this week)/.test(phrase)) addFilter(dateField, 'before', futureDate(8))
+
+  const customerField = table.fields.find((field) => /^(customer|customer name)$/i.test(field))
+  const customerValue = phrase.match(/(?:for|of) (?:customer|client|account)\s+([\w .&'-]+?)(?=\s+(?:by|as|with|where|and)|$)/)?.[1]?.trim()
+  if (customerField && customerValue) addFilter(customerField, 'contains', customerValue)
+  const assigneeField = table.fields.find((field) => /assigned to|owner/i.test(field))
+  const assigneeValue = phrase.match(/(?:assigned to|owned by)\s+([\w .&'-]+?)(?=\s+(?:by|as|with|where|and)|$)/)?.[1]?.trim()
+  if (assigneeField && assigneeValue) addFilter(assigneeField, 'contains', assigneeValue)
 }
 
 export const buildReportPromptGuide = (prompt, allowedCatalog) => {
@@ -230,9 +294,7 @@ export const parseReportPrompt = (prompt, allowedCatalog) => {
     else if (/assignment|group|team/.test(phrase)) groupBy = ['Assignment group']
   }
   if (table.key !== 'Incidents') {
-    const statusField = table.fields.find((field) => field.toLowerCase() === 'status')
-    const requestedStatus = ['draft', 'published', 'active', 'inactive', 'pending', 'completed', 'unread', 'read'].find((status) => new RegExp(`\\b${status}\\b`).test(phrase))
-    if (statusField && requestedStatus) addFilter(statusField, 'is', requestedStatus[0].toUpperCase() + requestedStatus.slice(1))
+    addGenericFilters(phrase, table, addFilter)
     const groupedFields = groupFieldsFromPhrase(phrase, table.fields)
     if (groupedFields.length) groupBy = groupedFields
     else {

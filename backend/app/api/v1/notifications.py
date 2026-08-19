@@ -170,7 +170,7 @@ def current_notification_recipients(notification: IncidentRegistrationEmail, dat
     else:
         return notification.recipients
 
-    unique_emails = list(dict.fromkeys(str(email).strip().lower() for email in emails if str(email).strip()))
+    unique_emails = list(dict.fromkeys(str(email).strip().lower() for email in [*emails, *external_emails] if str(email).strip()))
     return [Recipient(email=email, name=email) for email in unique_emails]
 
 

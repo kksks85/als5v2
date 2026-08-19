@@ -75,12 +75,14 @@ export const toolsProductColumns = [
 ]
 
 export const mrlsProductColumns = [
-  { key: 'product_serial_number', label: 'Product Serial Number', required: true, width: 175 },
+  { key: 'product_serial_number', label: 'MRLS Component ID', required: true, width: 175 },
   { key: 'part_number', label: 'Part Number', required: true, width: 150 },
   { key: 'sap_part_number', label: 'SAP Part number', required: false, width: 165 },
   { key: 'material_description', label: 'Material Description', required: true, width: 230 },
   { key: 'batch_number', label: 'Batch No', required: false, width: 165 },
   { key: 'material_serial_number', label: 'Material Serial No', required: false, width: 175 },
+  { key: 'customer', label: 'Customer', required: true, width: 175 },
+  { key: 'contract_number', label: 'Contract Number', required: true, width: 175 },
   { key: 'quantity', label: 'Quantity', required: true, width: 110 },
   { key: 'unit_of_measurement', label: 'Unit of Measurement (UOM)', required: true, width: 175 },
   { key: 'remarks', label: 'Remarks', required: false, width: 200 },

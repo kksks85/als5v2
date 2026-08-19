@@ -25,7 +25,7 @@ const palettes = [
   { key: 'signal', label: 'Signal', colors: ['#167d68', '#6cad5c', '#d4a72c', '#c84c4c'] },
 ]
 
-export default function ReportingPage({ user, data, reports = [], onSaveReport, onShareReport, initialReportId, initialReportDefinition }) {
+export default function ReportingPage({ user, data, reports = [], onSaveReport, onShareReport, initialReportId, initialReportDefinition, canViewCsmReports = false }) {
   const allowedCatalog = useMemo(() => [...reportCatalog, ...getProductCategoryReportCatalog(data.productAssets)]
     .filter((table) => table.roles.includes(user.role)), [data.productAssets, user.role])
   const [view, setView] = useState('list')
@@ -37,9 +37,14 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
   const [showShare, setShowShare] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const rowsBySource = useMemo(() => createReportRows(data), [data])
-  const result = useMemo(() => runReportDefinition(definition, rowsBySource), [definition, rowsBySource])
+  const reportingUser = data.users?.find((member) => member.email === user.email) || user
+  const reportRowsBySource = useMemo(() => ({
+    ...rowsBySource,
+    'Calendar events': (data.calendarEvents || []).filter((event) => [event.createdByUserId, event.createdBy, event.createdByEmail].some((value) => String(value || '').toLowerCase() === String(reportingUser.id || reportingUser.name || reportingUser.email).toLowerCase()) || String(event.createdBy || '').toLowerCase() === String(reportingUser.name || '').toLowerCase()).map((event) => ({ Date: event.date || event.createdAt?.slice(0, 10) || '--', Note: event.note || '--', 'Created by': event.createdBy || '--', Attachments: String(event.attachments?.length || 0) })),
+  }), [data.calendarEvents, reportingUser.email, reportingUser.id, reportingUser.name, rowsBySource])
+  const result = useMemo(() => runReportDefinition(definition, reportRowsBySource), [definition, reportRowsBySource])
   const selectedTable = allowedCatalog.find((table) => table.key === definition.source) || allowedCatalog[0]
-  const visibleReports = reports.filter((report) => report.createdBy === user.email || report.sharedWith?.includes(user.role) || report.sharedWith?.includes(user.name))
+  const visibleReports = reports.filter((report) => (report.csmOnly && canViewCsmReports) || (!report.csmOnly && (report.createdBy === user.email || report.sharedWith?.includes(user.role) || report.sharedWith?.includes(user.name))))
 
   const updateDefinition = (updates) => setDefinition((current) => ({ ...current, ...updates }))
   const startNew = () => {
@@ -156,7 +161,7 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
         {step === 3 && <StyleStep definition={definition} onChange={(style) => updateDefinition({ style: { ...definition.style, ...style } })} />}
         {step === 4 && <ReviewStep definition={definition} table={selectedTable} result={result} onSchedule={() => setShowSchedule(true)} />}
       </main>
-      <aside className="report-wizard-preview"><div className="report-preview-head"><div><span>Live preview</span><strong>{result.rows.length} matching record{result.rows.length === 1 ? '' : 's'}</strong></div><i>{selectedTable.label}</i></div><ReportVisualization definition={definition} table={selectedTable} result={result} compact={step !== 4} /></aside>
+      <aside className="report-wizard-preview"><div className="report-preview-head"><div><span>Live preview</span><strong>{result.rows.length} matching record{result.rows.length === 1 ? '' : 's'}</strong></div><i>{selectedTable.label}</i></div><ReportVisualization definition={definition} table={selectedTable} result={result} customers={data.customers} compact={step !== 4} /></aside>
     </div>
 
     <footer className="report-wizard-footer"><button className="compact-button secondary" disabled={step === 0} onClick={() => setStep((current) => Math.max(0, current - 1))}><ArrowLeft size={14} /> Back</button><span>Step {step + 1} of {wizardSteps.length}</span>{step < wizardSteps.length - 1 ? <button className="compact-button primary" onClick={() => setStep((current) => current + 1)}>Next <ChevronRight size={14} /></button> : <button className="compact-button primary" onClick={() => setNotice(`Report ran successfully with ${result.rows.length} matching records.`)}><Play size={14} /> Run report</button>}</footer>
@@ -210,7 +215,11 @@ function ReviewStep({ definition, table, result, onSchedule }) {
   return <section className="report-step"><header><span>5</span><div><h2>Review and run</h2><p>Confirm the report definition before saving, sharing, or scheduling.</p></div></header><div className="report-review-grid"><article><span>Source</span><strong>{table.label}</strong></article><article><span>Type</span><strong>{reportTypes.find((item) => item.key === definition.visualization)?.label}</strong></article><article><span>Conditions</span><strong>{definition.filters.length}</strong></article><article><span>Matching records</span><strong>{result.rows.length}</strong></article></div><div className="report-review-definition"><h3>Definition</h3><dl><div><dt>Fields</dt><dd>{definition.selectedFields?.join(', ') || 'Default fields'}</dd></div><div><dt>Grouped by</dt><dd>{definition.groupBy?.join(' then ') || 'No grouping'}</dd></div><div><dt>Conditions</dt><dd>{definition.filters.length ? definition.filters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join(' AND ') : 'No conditions'}</dd></div></dl></div><button className="compact-button secondary" onClick={onSchedule}><CalendarClock size={14} /> Schedule delivery</button></section>
 }
 
-function ReportVisualization({ definition, table, result, compact }) {
+function ReportVisualization({ definition, table, result, compact, customers = [] }) {
+  if (definition.visualization === 'personal-calendar') return <PersonalCalendarGrid rows={result.rows} />
+  if (definition.visualization === 'customer-priority-matrix') return <CustomerPriorityMatrix rows={result.rows} customers={customers} />
+  if (definition.visualization === 'mail-priority-status-matrix') return <MailPriorityStatusMatrix rows={result.rows} />
+  if (definition.visualization === 'query-customer-status-matrix') return <QueryCustomerStatusMatrix rows={result.rows} customers={customers} />
   if (definition.visualization === 'table' || !definition.groupBy?.length) return <ReportTable rows={result.rows} fields={definition.selectedFields?.length ? definition.selectedFields : table.fields} compact={compact} />
   if (!result.groups.length) return <div className="wizard-chart-empty"><BarChart3 size={24} /><strong>No matching grouped data</strong><span>Adjust the conditions or grouping fields.</span></div>
   const maximum = Math.max(...result.groups.map((group) => group.value), 1)
@@ -220,6 +229,40 @@ function ReportVisualization({ definition, table, result, compact }) {
     return <div className="wizard-donut"><div className="wizard-donut-ring"><strong>{total}</strong><span>records</span></div>{definition.style?.showLegend !== false && <div className="wizard-chart-legend">{result.groups.slice(0, 6).map((group, index) => <p key={group.label}><i style={{ background: palette.colors[index % palette.colors.length] }} /><span>{group.label}</span>{definition.style?.showValues !== false && <b>{group.value}</b>}</p>)}</div>}</div>
   }
   return <div className={`wizard-bars ${definition.visualization}`}>{result.groups.slice(0, compact ? 6 : 12).map((group, index) => <div key={group.label}><small title={group.label}>{group.label}</small><span><i style={{ width: `${Math.max(4, group.value / maximum * 100)}%`, background: palette.colors[index % palette.colors.length] }} /></span>{definition.style?.showValues !== false && <b>{group.value}</b>}</div>)}</div>
+}
+
+function PersonalCalendarGrid({ rows }) {
+  const eventMap = rows.reduce((result, row) => { const date = String(row.Date || '').slice(0, 10); if (date) (result[date] ||= []).push(row); return result }, {})
+  const dates = Object.keys(eventMap).sort()
+  const anchor = dates.length ? new Date(`${dates[0]}T00:00:00`) : new Date()
+  const month = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+  const offset = (month.getDay() + 6) % 7
+  const start = new Date(month.getFullYear(), month.getMonth(), 1 - offset)
+  const days = Array.from({ length: 42 }, (_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index))
+  return <div className="report-calendar-grid"><header>{month.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</header><div className="report-calendar-weekdays">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <b key={day}>{day}</b>)}</div><div className="report-calendar-days">{days.map((day) => { const key = day.toISOString().slice(0, 10); const events = eventMap[key] || []; return <article key={key} className={day.getMonth() === month.getMonth() ? '' : 'outside'}><span>{day.getDate()}</span>{events.map((event, index) => <small key={`${key}-${index}`} title={event.Note}>{event.Note}</small>)}</article> })}</div></div>
+}
+
+function CustomerPriorityMatrix({ rows, customers }) {
+  const priorities = ['Critical', 'High', 'Medium', 'Low']
+  const customerIds = [...new Set([...customers.map((customer) => String(customer.id)), ...rows.map((row) => row['Customer ID']).filter(Boolean)])]
+  const summary = customerIds.map((customerId) => {
+    const customer = customers.find((item) => String(item.id) === String(customerId))
+    const customerRows = rows.filter((row) => String(row['Customer ID']) === String(customerId))
+    return { customer: customer?.name || customerRows[0]?.Customer || '--', total: customerRows.length, counts: Object.fromEntries(priorities.map((priority) => [priority, customerRows.filter((row) => row.Priority === priority).length])) }
+  }).sort((left, right) => left.customer.localeCompare(right.customer))
+  return <div className="wizard-report-table customer-priority-matrix"><table><thead><tr><th>Customer Name</th><th>Total Incident</th>{priorities.map((priority) => <th key={priority}>{priority}</th>)}</tr></thead><tbody>{summary.map((item) => <tr key={item.customer}><td>{item.customer}</td><td>{item.total}</td>{priorities.map((priority) => <td key={priority}>{item.counts[priority]}</td>)}</tr>)}{!summary.length && <tr><td colSpan="6">No Incident records are available.</td></tr>}</tbody></table></div>
+}
+
+function MailPriorityStatusMatrix({ rows }) {
+  const priorities = ['Critical', 'High', 'Medium', 'Low']
+  const statuses = [...new Set(rows.map((row) => row.Status).filter(Boolean))].sort((left, right) => left.localeCompare(right))
+  return <div className="wizard-report-table customer-priority-matrix"><table><thead><tr><th>Criticality</th><th>Total correspondence</th>{statuses.map((status) => <th key={status}>{status}</th>)}</tr></thead><tbody>{priorities.map((priority) => { const priorityRows = rows.filter((row) => row.Priority === priority); return <tr key={priority}><td>{priority}</td><td>{priorityRows.length}</td>{statuses.map((status) => <td key={status}>{priorityRows.filter((row) => row.Status === status).length}</td>)}</tr> })}{!statuses.length && <tr><td colSpan="2">No correspondence records are available.</td></tr>}</tbody></table></div>
+}
+
+function QueryCustomerStatusMatrix({ rows, customers }) {
+  const statuses = ['Open', 'Pending', 'Resolved', 'Closed']
+  const customerIds = [...new Set([...customers.map((customer) => String(customer.id)), ...rows.map((row) => row['Customer ID']).filter(Boolean)])]
+  return <div className="wizard-report-table customer-priority-matrix"><table><thead><tr><th>Customer Name</th><th>Total queries</th>{statuses.map((status) => <th key={status}>{status}</th>)}</tr></thead><tbody>{customerIds.map((customerId) => { const customerRows = rows.filter((row) => String(row['Customer ID']) === String(customerId)); const customer = customers.find((item) => String(item.id) === String(customerId)); return <tr key={customerId}><td>{customer?.name || customerRows[0]?.Customer || '--'}</td><td>{customerRows.length}</td>{statuses.map((status) => <td key={status}>{customerRows.filter((row) => row.Status === status).length}</td>)}</tr> })}{!customerIds.length && <tr><td colSpan="6">No query records are available.</td></tr>}</tbody></table></div>
 }
 
 function ReportTable({ rows, fields, compact }) {

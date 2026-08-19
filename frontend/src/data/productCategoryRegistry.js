@@ -78,18 +78,34 @@ export const reconcileProductAssets = (products, contracts, existingAssets = [])
   const uniqueProducts = new Map()
 
   products.forEach((product) => {
-    const serialNumber = String(product.product_serial_number || '').trim()
     const category = String(product.product_category || '').trim()
+    const isMrlsComponent = canonicalProductCategory(category) === 'mrls'
+    const serialNumber = String(isMrlsComponent ? product.material_serial_number || product.product_serial_number : product.product_serial_number || '').trim()
     if (!serialNumber || !category) return
     const id = `${categoryKey(category)}::${serialNumber}`
-    if (!uniqueProducts.has(id)) uniqueProducts.set(id, { id, serialNumber, category })
+    if (!uniqueProducts.has(id)) uniqueProducts.set(id, {
+      id,
+      serialNumber,
+      category,
+      productMasterSerialNumber: product.product_serial_number || '',
+      customer: product.customer || '',
+      contract_number: product.contract_number || product.contractNumber || '',
+    })
   })
 
   return [...uniqueProducts.values()]
     .sort((left, right) => left.category.localeCompare(right.category) || left.serialNumber.localeCompare(right.serialNumber, undefined, { numeric: true }))
     .map((product) => {
-      const existing = existingById.get(product.id)
+      const existing = existingById.get(product.id) || (canonicalProductCategory(product.category) === 'mrls'
+        ? existingAssets.find((asset) => asset.category === product.category && asset.serialNumber === product.productMasterSerialNumber)
+        : undefined)
+      const componentContractNumber = product.contract_number || product.contractNumber || ''
+      const componentCustomer = product.customer || ''
       if (existing) {
+        if (componentContractNumber || componentCustomer) {
+          const contract = contracts.find((candidate) => candidate.number === componentContractNumber)
+          return { ...product, ...existing, id: product.id, serialNumber: product.serialNumber, category: product.category, contractNumber: componentContractNumber || existing.contractNumber || '', customer: componentCustomer || contract?.customer || existing.customer || '', warranty: contract?.warranty || existing.warranty || '', warrantyExpiry: contract?.expiryDate || existing.warrantyExpiry || '', deliveredOn: contract?.jriDate || existing.deliveredOn || '' }
+        }
         const contract = contracts.find((candidate) => candidate.number === existing.contractNumber)
         const allocation = allocations.find((candidate) => candidate.contractNumber === existing.contractNumber && productCategoryMatches(candidate.category, product.category))
         if (existing.contractNumber) {
