@@ -278,38 +278,24 @@ const initialAssignmentGroups = [
 /* ──────────────────────────────────────────
    Login Page
    ────────────────────────────────────────── */
-function LoginPage({ onLogin, users, assignmentGroups, directoryReady }) {
-  const initialsFor = (name) => name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
-  const demoUsers = useMemo(() => [
-    ...users
-      .filter((user) => user.status === 'Active' && user.role === 'Administrator')
-      .slice(0, 1)
-      .map((user) => ({ key: 'admin', label: 'Administrator', name: user.name, email: user.email, role: user.role, initials: initialsFor(user.name), credential: user.employeeId })),
-    ...assignmentGroups
-      .filter((group) => group.active)
-      .map((group) => {
-        const member = users.find((user) => group.memberIds?.includes(user.id) && user.status === 'Active')
-        return member && { key: `group-${group.id}`, label: group.name, name: member.name, email: member.email, role: member.role, initials: initialsFor(member.name), credential: member.employeeId }
-      })
-      .filter(Boolean),
-  ], [assignmentGroups, users])
-  const [selectedUserKey, setSelectedUserKey] = useState('')
-  const selectedUser = demoUsers.find((user) => user.key === selectedUserKey) || demoUsers[0]
-
-  useEffect(() => {
-    if (!demoUsers.some((user) => user.key === selectedUserKey)) setSelectedUserKey(demoUsers[0]?.key || '')
-  }, [demoUsers, selectedUserKey])
-
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [adminLogin, setAdminLogin] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [loginError, setLoginError] = useState('')
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!selectedUser) return
     setLoginError('')
+    setSubmitting(true)
     try {
-      const session = await authenticationApi.demoLogin(selectedUser)
-      onLogin({ ...selectedUser, session })
+      const session = await authenticationApi.login({ username, password })
+      const sessionUser = session.user || {}
+      onLogin({ name: sessionUser.display_name || username, email: sessionUser.email || username, role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
     } catch (error) {
-      setLoginError(error.message)
+      setLoginError(error.message || 'Sign-in failed.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -328,15 +314,16 @@ function LoginPage({ onLogin, users, assignmentGroups, directoryReady }) {
       <div className="login-form-panel">
         <img className="tata-wordmark" src="/assets/tasl_logo.png" alt="Tata Advanced Systems" />
         <div className="login-card">
-          <p className="login-eyebrow">Demo access</p>
-          <h2>Choose a test identity</h2>
-          <p className="login-desc">{directoryReady ? 'Select a representative from an assignment group to test incident visibility and workflow routing.' : 'Loading active assignment group members...'}</p>
+          <p className="login-eyebrow">UAT access</p>
+          <h2>{adminLogin ? 'Administrator sign-in' : 'Active Directory sign-in'}</h2>
+          <p className="login-desc">{adminLogin ? 'Use the approved local UAT Administrator account.' : 'Sign in using your company Active Directory username and password.'}</p>
           <form onSubmit={handleSubmit}>
-            <div className="demo-user-tiles">{demoUsers.map((demoUser) => <button type="button" key={demoUser.key} className={`demo-user-tile ${selectedUser?.key === demoUser.key ? 'selected' : ''}`} onClick={() => setSelectedUserKey(demoUser.key)}><span className="demo-user-avatar">{demoUser.initials}</span><span className="demo-user-details"><strong>{demoUser.label}</strong><small>{demoUser.name}</small><small>{demoUser.email}</small></span><span className="demo-user-credential">{demoUser.credential}</span></button>)}</div>
-            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={!directoryReady || !selectedUser}><LogIn size={17} /> Continue as {selectedUser?.name || 'selected user'}</button></div>
+            <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={adminLogin ? 'admin' : 'AD username'} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label></div>
+            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || !username.trim() || !password}><LogIn size={17} /> {submitting ? 'Signing in...' : 'Sign in'}</button></div>
           </form>
           {loginError && <p className="login-desc" role="alert">{loginError}</p>}
-          <div className="login-footer"><Lock size={13} /> Demo identities map to the seeded user records and Entra IDs.</div>
+          <button type="button" className="help-link" onClick={() => { setAdminLogin((value) => !value); setUsername(''); setPassword(''); setLoginError('') }}>{adminLogin ? 'Use Active Directory sign-in' : 'Administrator sign-in'}</button>
+          <div className="login-footer"><Lock size={13} /> UAT authentication is enforced through Active Directory.</div>
         </div>
       </div>
     </div>
@@ -1186,7 +1173,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       {mobileNavigationOpen && <button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavigationOpen(false)} />}
       <aside className={`sidebar ${mobileNavigationOpen ? 'mobile-open' : ''}`}>
         <div className="brand">
-          <div><strong>ALS50</strong><span>CSM Portal</span></div>
+          <img className="brand-logo" src="/assets/tasl_logo_transparent.png" alt="Tata Advanced Systems" />
+          <div><strong>S - UAV</strong><span>CSM Portal</span></div>
         </div>
 
         <nav aria-label="Primary navigation">

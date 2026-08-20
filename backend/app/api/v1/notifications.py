@@ -7,7 +7,6 @@ from email.message import EmailMessage
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -267,12 +266,11 @@ def send_incident_registration_email(
             "details": details,
             "occurredAt": created_at,
         }
-        statement = insert(EmailLogRecord).values(record_id=record_id, payload=payload)
-        statement = statement.on_conflict_do_update(
-            index_elements=[EmailLogRecord.record_id],
-            set_={"payload": statement.excluded.payload},
-        )
-        database.execute(statement)
+        existing_log = database.scalar(select(EmailLogRecord).where(EmailLogRecord.record_id == record_id))
+        if existing_log:
+            existing_log.payload = payload
+        else:
+            database.add(EmailLogRecord(record_id=record_id, payload=payload))
         results.append(payload)
     database.commit()
     return {

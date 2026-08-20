@@ -23,7 +23,7 @@ router = APIRouter(prefix="/authentication", tags=["authentication"])
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=1024, repr=False)
-    rsa_token: str = Field(min_length=1, max_length=1024, repr=False)
+    rsa_token: str = Field(default="", max_length=1024, repr=False)
 
     @field_validator("username")
     @classmethod

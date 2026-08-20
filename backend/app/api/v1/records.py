@@ -4,7 +4,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -167,15 +166,14 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
             reject_compressed_knowledge_attachments(record.payload)
     now = datetime.now(UTC)
     if resource in PRODUCT_MASTER_RESOURCES:
-        statement = insert(ProductMasterRecord).values([
-            {"resource": resource, "record_id": record.record_id, "payload": record.payload, "updated_at": now}
-            for record in records
-        ])
-        statement = statement.on_conflict_do_update(
-            constraint="uq_product_master_records_resource_record_id",
-            set_={"payload": statement.excluded.payload, "updated_at": statement.excluded.updated_at},
-        )
-        database.execute(statement)
+        existing = {(record.resource, record.record_id): record for record in database.scalars(select(ProductMasterRecord).where(ProductMasterRecord.resource == resource)).all()}
+        for record in records:
+            target = existing.get((resource, record.record_id))
+            if target:
+                target.payload = record.payload
+                target.updated_at = now
+            else:
+                database.add(ProductMasterRecord(resource=resource, record_id=record.record_id, payload=record.payload, updated_at=now))
         return
     model = RESOURCE_MODELS[resource]
     def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -191,12 +189,12 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
         if normalized.get("priority") == "Critical (AOG)":
             normalized["priority"] = "Critical"
         return normalized
-    statement = insert(model).values([
-        {"record_id": record.record_id, "payload": normalize_payload(record.payload), "updated_at": now}
-        for record in records
-    ])
-    statement = statement.on_conflict_do_update(
-        index_elements=[model.record_id],
-        set_={"payload": statement.excluded.payload, "updated_at": statement.excluded.updated_at},
-    )
-    database.execute(statement)
+    existing = {record.record_id: record for record in database.scalars(select(model).where(model.record_id.in_([record.record_id for record in records]))).all()}
+    for record in records:
+        payload = normalize_payload(record.payload)
+        target = existing.get(record.record_id)
+        if target:
+            target.payload = payload
+            target.updated_at = now
+        else:
+            database.add(model(record_id=record.record_id, payload=payload, updated_at=now))

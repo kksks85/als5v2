@@ -18,7 +18,7 @@ services:
     build: ./backend
     environment:
       APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-als50}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-als50}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-als50}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-als50}}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
       ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
@@ -30,6 +30,11 @@ services:
       LDAP_BASE_DN: ${LDAP_BASE_DN:-}
       LDAP_BIND_DN: ${LDAP_BIND_DN:-}
       LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
+      LDAP_USER_DN_TEMPLATE: ${LDAP_USER_DN_TEMPLATE:-{username}@{domain}}
+      LDAP_USER_DOMAIN: ${LDAP_USER_DOMAIN:-}
+      UAT_LOCAL_ADMIN_USERNAME: ${UAT_LOCAL_ADMIN_USERNAME:-admin}
+      UAT_LOCAL_ADMIN_PASSWORD: ${UAT_LOCAL_ADMIN_PASSWORD:-}
+      UAT_LOCAL_ADMIN_EMAIL: ${UAT_LOCAL_ADMIN_EMAIL:-admin@als50.local}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}

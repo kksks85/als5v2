@@ -64,6 +64,30 @@ docker compose down
 docker compose down -v # Removes the PostgreSQL volume; use only when deliberately resetting data.
 ```
 
+## Microsoft SQL Server on-prem deployment
+
+The API supports Microsoft SQL Server through SQLAlchemy and `pyodbc`. The existing PostgreSQL Compose database remains the local-development default; set `DATABASE_URL` to use the company SQL Server.
+
+```dotenv
+# AMD64 server with Microsoft ODBC Driver 18
+DATABASE_URL=mssql+pyodbc://als50_app:<url-encoded-password>@sqlserver.internal:1433/ALS50?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
+
+# ARM64 deployment host using the bundled FreeTDS ODBC driver
+# DATABASE_URL=mssql+pyodbc://als50_app:<url-encoded-password>@sqlserver.internal:1433/ALS50?driver=FreeTDS&tds_version=8.0
+```
+
+Required SQL Server prerequisites:
+
+- A dedicated `ALS50` database and least-privilege application login.
+- Permission to create the initial application schema during deployment, then normal read/write permission for the API login.
+- TCP access from the API host to SQL Server, normally port `1433`.
+- SQL Server TLS certificate trusted by the API host when `Encrypt=yes` and `TrustServerCertificate=no` are used.
+- Backup, restore, retention, and disaster-recovery policies managed by the company DBA team.
+
+For a **new SQL Server database**, application startup creates the current portable schema from SQLAlchemy models and stamps Alembic at the current baseline revision. This avoids executing the historic PostgreSQL JSONB migrations. Export/import existing PostgreSQL JSON payload records into the SQL Server database during the approved cutover window; do not point both environments at the same user population while migration is in progress.
+
+The API image installs Microsoft ODBC Driver 18 on AMD64 hosts and FreeTDS ODBC on ARM64 hosts. PostgreSQL-specific runtime JSONB and `ON CONFLICT` dependencies have been replaced with portable JSON and ORM upsert operations.
+
 ## Enterprise authentication deployment
 
 The current identity selector remains intentionally enabled for demonstrations. When `authentication_settings.enabled` is set and its provider is `rsa_ad`, `/api/v1/authentication/login` becomes the enterprise entry point and demo login is refused.

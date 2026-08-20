@@ -1,7 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -10,7 +9,7 @@ from app.database import Base
 class RecordMixin:
     id: Mapped[int] = mapped_column(primary_key=True)
     record_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
-    payload: Mapped[dict] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -37,7 +36,7 @@ class ProductMasterRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     resource: Mapped[str] = mapped_column(String(80), index=True)
     record_id: Mapped[str] = mapped_column(String(160))
-    payload: Mapped[dict] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -116,7 +115,7 @@ class ComponentRepair(Base):
     repair_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     repair_outcome: Mapped[str | None] = mapped_column(String(80))
     repair_cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
-    replacement_parts: Mapped[dict] = mapped_column(JSONB, default=list)
+    replacement_parts: Mapped[dict] = mapped_column(JSON, default=list)
     final_disposition: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -271,7 +270,7 @@ class UserSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     username: Mapped[str] = mapped_column(String(255), index=True)
-    roles: Mapped[dict] = mapped_column(JSONB, default=list)
+    roles: Mapped[dict] = mapped_column(JSON, default=list)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -287,5 +286,5 @@ class AuthenticationAuditLog(Base):
     provider: Mapped[str] = mapped_column(String(50))
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     correlation_id: Mapped[str] = mapped_column(String(64), index=True)
-    details: Mapped[dict] = mapped_column(JSONB, default=dict)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

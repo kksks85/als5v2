@@ -2,8 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.models import ApplicationSecretNotice, AssignmentGroupRecord, ContractRecord, CustomerRecord, IncidentRecord, ProductRecord, ProductAssetRecord, UserRecord
@@ -11,7 +10,7 @@ from app.models import ApplicationSecretNotice, AssignmentGroupRecord, ContractR
 
 NOTICES = [
     ("ENTRA_CLIENT_SECRET", "Microsoft Entra client secret. Set only in deployment environment variables; never store it in the database."),
-    ("DATABASE_URL", "PostgreSQL connection string. Set through deployment environment variables or Docker Compose secrets."),
+    ("DATABASE_URL", "Database connection string. Supports PostgreSQL and Microsoft SQL Server through deployment environment variables."),
 ]
 
 WORKFLOWS = {
@@ -178,6 +177,16 @@ def incident_state(stage: str, stage_index: int) -> str:
     return "New" if stage_index == 0 else "In progress"
 
 
+def upsert_payload_records(database, model, records: list[dict]) -> None:
+    existing = {record.record_id: record for record in database.scalars(select(model).where(model.record_id.in_([item["record_id"] for item in records]))).all()}
+    for item in records:
+        target = existing.get(item["record_id"])
+        if target:
+            target.payload = item["payload"]
+        else:
+            database.add(model(record_id=item["record_id"], payload=item["payload"]))
+
+
 def seed_incidents(database) -> None:
     if database.scalar(select(IncidentRecord.record_id).limit(1)):
         return
@@ -235,11 +244,7 @@ def seed_incidents(database) -> None:
             },
         })
 
-    statement = insert(IncidentRecord).values(records)
-    database.execute(statement.on_conflict_do_update(
-        index_elements=[IncidentRecord.record_id],
-        set_={"payload": statement.excluded.payload, "updated_at": func.now()},
-    ))
+    upsert_payload_records(database, IncidentRecord, records)
 
 
 def seed_product_assets(database) -> None:
@@ -311,18 +316,18 @@ def seed_product_assets(database) -> None:
             },
         })
     
-    statement = insert(ProductAssetRecord).values(records)
-    database.execute(statement.on_conflict_do_update(
-        index_elements=[ProductAssetRecord.record_id],
-        set_={"payload": statement.excluded.payload, "updated_at": func.now()},
-    ))
+    upsert_payload_records(database, ProductAssetRecord, records)
 
 
 def seed_demo_identities(database) -> None:
-    user_records = insert(UserRecord).values(DEMO_USERS)
-    database.execute(user_records.on_conflict_do_nothing(index_elements=[UserRecord.record_id]))
-    group_records = insert(AssignmentGroupRecord).values(DEMO_ASSIGNMENT_GROUPS)
-    database.execute(group_records.on_conflict_do_nothing(index_elements=[AssignmentGroupRecord.record_id]))
+    existing_users = {record.record_id for record in database.scalars(select(UserRecord)).all()}
+    existing_groups = {record.record_id for record in database.scalars(select(AssignmentGroupRecord)).all()}
+    for record in DEMO_USERS:
+        if record["record_id"] not in existing_users:
+            database.add(UserRecord(record_id=record["record_id"], payload=record["payload"]))
+    for record in DEMO_ASSIGNMENT_GROUPS:
+        if record["record_id"] not in existing_groups:
+            database.add(AssignmentGroupRecord(record_id=record["record_id"], payload=record["payload"]))
 
 
 def migrate_contract_lifecycle(database) -> None:
