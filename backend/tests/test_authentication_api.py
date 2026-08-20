@@ -36,3 +36,18 @@ def test_demo_login_returns_standard_session_contract(monkeypatch) -> None:
     assert body["token_type"] == "bearer"
     assert body["user"]["roles"] == ["Administrator"]
     assert "password" not in body
+
+
+def test_demo_login_requires_configured_uat_password(monkeypatch) -> None:
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-only-signing-secret-with-at-least-thirty-two-bytes")
+    monkeypatch.setenv("UAT_DEMO_PASSWORD", "Welcome@123")
+    database = FakeDatabase()
+    app.dependency_overrides[get_db] = lambda: database
+    try:
+        client = TestClient(app)
+        rejected = client.post("/api/v1/authentication/demo-login", json={"username": "ALS-EMP-001", "display_name": "Demo Administrator", "password": "wrong-password"})
+        accepted = client.post("/api/v1/authentication/demo-login", json={"username": "ALS-EMP-001", "display_name": "Demo Administrator", "password": "Welcome@123"})
+    finally:
+        app.dependency_overrides.clear()
+    assert rejected.status_code == 401
+    assert accepted.status_code == 200

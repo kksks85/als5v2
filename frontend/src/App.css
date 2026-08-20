@@ -152,11 +152,13 @@ main { min-width:0; display:flex; flex-direction:column; }
 .profile-popover header strong,.profile-popover header span { display:block; }
 .profile-popover header strong { color:#20314a; font-size:13px; }
 .profile-popover header span { overflow:hidden; color:#66758a; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
-.profile-menu-section { max-height:220px; margin:8px 0; overflow:auto; }
+.profile-menu-section { margin:8px 0; }
 .profile-menu-section > span { display:block; padding:4px 8px 6px; color:#66758a; font-size:10px; font-weight:700; text-transform:uppercase; }
 .profile-menu-section button,.profile-menu-return,.profile-menu-signout { display:flex; width:100%; align-items:center; gap:8px; padding:8px; border-radius:5px; color:#20314a; font-size:12px; text-align:left; }
 .profile-menu-section button:hover,.profile-menu-return:hover,.profile-menu-signout:hover { background:#eef4fb; }
 .profile-menu-section button small { margin-left:auto; color:#66758a; font-size:10px; }
+.impersonation-search { display:flex; align-items:center; gap:6px; margin:0 8px 8px; padding:7px; border:1px solid #cbd7e4; border-radius:5px; color:#66758a; }
+.impersonation-search input { width:100%; min-width:0; border:0; outline:0; color:#20314a; font-size:12px; }
 .profile-menu-return { border-top:1px solid #e4e9f0; }
 .profile-menu-signout { margin-top:4px; border-top:1px solid #e4e9f0; color:#b42318; }
 .incident-detail-page.view-only .incident-detail-sheet input,

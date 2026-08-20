@@ -5,6 +5,8 @@ profile/groups, and group-to-role mapping is persisted locally. Demo login is
 kept separately so it cannot be confused with production authentication.
 """
 
+import hmac
+import os
 from datetime import datetime
 
 import jwt
@@ -38,6 +40,7 @@ class DemoLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=255)
     display_name: str = Field(min_length=1, max_length=255)
     email: str = Field(default="", max_length=320)
+    password: str = Field(default="", max_length=1024, repr=False)
 
 
 class RoleMappingInput(BaseModel):
@@ -100,6 +103,9 @@ def demo_login(body: DemoLoginRequest, request: Request, database: Session = Dep
     settings = settings_for(database)
     if settings.enabled and settings.provider != "demo":
         raise HTTPException(status_code=403, detail={"code": "DEMO_LOGIN_DISABLED", "message": "Demo login is disabled when enterprise authentication is enabled."})
+    demo_password = os.getenv("UAT_DEMO_PASSWORD", "")
+    if demo_password and not hmac.compare_digest(body.password, demo_password):
+        raise HTTPException(status_code=401, detail={"code": "AUTH_INVALID_CREDENTIALS", "message": "Username or password is invalid."})
     try:
         profile = DirectoryProfile(username=body.username, display_name=body.display_name, email=body.email, groups=[])
         token, roles, expires_at = issue_demo_session(database, profile, source_ip(request))

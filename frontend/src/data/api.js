@@ -61,10 +61,10 @@ export const authenticationApi = {
   clearSession: () => {
     accessToken = ''
   },
-  demoLogin: async (user) => {
+  demoLogin: async (user, password) => {
     const session = await request('/authentication/demo-login', {
       method: 'POST',
-      body: JSON.stringify({ username: user.credential || user.email, display_name: user.name, email: user.email }),
+      body: JSON.stringify({ username: user.credential || user.email, display_name: user.name, email: user.email, password }),
     })
     accessToken = session.access_token
     return session

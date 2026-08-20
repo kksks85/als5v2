@@ -8,7 +8,9 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 engine_options = {"pool_pre_ping": True}
 if DATABASE_URL.startswith("mssql+"):
     engine_options.update({"pool_recycle": 1800})
-    if "driver=FreeTDS" not in DATABASE_URL:
+    if "driver=FreeTDS" in DATABASE_URL:
+        engine_options["use_setinputsizes"] = False
+    else:
         engine_options["fast_executemany"] = True
 engine = create_engine(DATABASE_URL, **engine_options)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

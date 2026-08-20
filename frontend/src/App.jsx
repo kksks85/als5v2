@@ -284,6 +284,7 @@ function LoginPage({ onLogin }) {
   const [adminLogin, setAdminLogin] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [loginError, setLoginError] = useState('')
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoginError('')
@@ -480,6 +481,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [productAssetDrill, setProductAssetDrill] = useState(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [impersonationSearch, setImpersonationSearch] = useState('')
+  const [impersonationCandidate, setImpersonationCandidate] = useState(null)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const [inventoryMasterNavigationOpen, setInventoryMasterNavigationOpen] = useState(true)
   const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(true)
@@ -1237,7 +1240,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
               <span>{user.initials}</span>
               <div><strong>{user.name}</strong><small>{impersonatingUser ? `Impersonating · ${user.role}` : user.role}</small></div>
               <ChevronDown size={16} />
-            </button>{profileMenuOpen && <div className="profile-popover"><header><strong>{user.name}</strong><span>{user.email}</span></header>{canImpersonate && <><div className="profile-menu-section"><span>Impersonate user</span>{users.filter((member) => member.status === 'Active' && member.email !== user.email).map((member) => <button type="button" key={member.id} onClick={() => { onImpersonate(member); setProfileMenuOpen(false) }}><Users size={15} /><span>{member.name}</span><small>{member.role}</small></button>)}</div>{impersonatingUser && <button type="button" className="profile-menu-return" onClick={() => { onStopImpersonating(); setProfileMenuOpen(false) }}>Return to administrator</button>}</>}<button type="button" className="profile-menu-signout" onClick={onLogout}>Sign out</button></div>}</div>
+            </button>{profileMenuOpen && <div className="profile-popover"><header><strong>{user.name}</strong><span>{user.email}</span></header>{canImpersonate && <><div className="profile-menu-section"><span>Impersonate user</span><label className="impersonation-search"><Search size={14} /><input autoFocus value={impersonationSearch} onChange={(event) => setImpersonationSearch(event.target.value)} placeholder="Search name, email, or role" /></label>{impersonationSearch.trim() && users.filter((member) => member.status === 'Active' && member.email !== user.email && [member.name, member.email, member.role].some((value) => String(value || '').toLowerCase().includes(impersonationSearch.trim().toLowerCase()))).slice(0, 8).map((member) => <button type="button" key={member.id} onClick={() => { setImpersonationCandidate(member); setProfileMenuOpen(false); setImpersonationSearch('') }}><Users size={15} /><span>{member.name}</span><small>{member.role}</small></button>)}</div>{impersonatingUser && <button type="button" className="profile-menu-return" onClick={() => { onStopImpersonating(); setProfileMenuOpen(false) }}>Return to administrator</button>}</>}<button type="button" className="profile-menu-signout" onClick={onLogout}>Sign out</button></div>}</div>
           </div>
         </header>
         <section className="content">
@@ -1246,6 +1249,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
           {renderPage()}
         </section>
       </main>
+      {impersonationCandidate && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Confirm user impersonation"><h2>Impersonate {impersonationCandidate.name}?</h2><p>You are about to act as {impersonationCandidate.name} ({impersonationCandidate.role}). Their assigned access and permissions will apply until you return to your administrator session.</p><footer><button type="button" className="incident-cancel-button" onClick={() => setImpersonationCandidate(null)}>Cancel</button><button type="button" className="incident-next-stage-button" onClick={() => { onImpersonate(impersonationCandidate); setImpersonationCandidate(null) }}>Confirm impersonation</button></footer></section></div>}
     </div>
   )
 }
