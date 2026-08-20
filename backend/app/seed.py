@@ -194,7 +194,7 @@ def seed_incidents(database) -> None:
     customer_payloads = database.scalars(select(CustomerRecord.payload).order_by(CustomerRecord.record_id)).all()
     customer_names = {payload.get("name") for payload in customer_payloads}
     customers = [customer for customer in CUSTOMERS if not customer_names or customer[0] in customer_names]
-    products = database.scalars(select(ProductRecord.payload).where(ProductRecord.payload["product_serial_number"].astext != "").order_by(ProductRecord.record_id).limit(60)).all()
+    products = database.scalars(select(ProductRecord.payload).where(ProductRecord.payload["product_serial_number"].as_string() != "").order_by(ProductRecord.record_id).limit(60)).all()
     products = products or FALLBACK_PRODUCTS
     group_payloads = database.scalars(select(AssignmentGroupRecord.payload).order_by(AssignmentGroupRecord.record_id)).all()
     groups = [payload.get("name") for payload in group_payloads if payload.get("name")]

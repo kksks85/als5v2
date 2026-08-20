@@ -303,7 +303,7 @@ function LoginPage({ onLogin }) {
     <div className="login-screen">
       <div className="login-image-panel">
         <div className="login-brand-content">
-          <div className="login-brand-lockup"><span className="login-brand-mark"><img src="/assets/als50-logo-cropped.png" alt="ALS50 CSM Portal logo" /></span><span>ALS50 CSM Portal</span></div>
+          <div className="login-brand-lockup"><span className="login-brand-mark"><img src="/assets/als50-logo-cropped.png" alt="S-UAV CSM Portal logo" /></span><span>S-UAV CSM Portal</span></div>
           <div className="login-image-copy">
             <h1>Every mission, supported.</h1>
             <p>Customer Support Management</p>

@@ -8,7 +8,8 @@ from app.database import Base
 import app.models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url")))
+database_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
@@ -27,6 +28,9 @@ def run_migrations_online() -> None:
         if connection.dialect.name == "mssql":
             # Historical revisions contain PostgreSQL JSONB syntax. A fresh SQL Server
             # deployment uses the current portable model schema as its baseline.
+            baseline_exists = connection.execute(text("SELECT OBJECT_ID('alembic_version', 'U')")).scalar()
+            if baseline_exists:
+                return
             target_metadata.create_all(connection)
             connection.execute(text("IF OBJECT_ID('alembic_version', 'U') IS NULL CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
             connection.execute(text("DELETE FROM alembic_version"))

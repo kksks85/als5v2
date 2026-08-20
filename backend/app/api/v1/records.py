@@ -189,7 +189,11 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
         if normalized.get("priority") == "Critical (AOG)":
             normalized["priority"] = "Critical"
         return normalized
-    existing = {record.record_id: record for record in database.scalars(select(model).where(model.record_id.in_([record.record_id for record in records]))).all()}
+    existing = {}
+    record_ids = [record.record_id for record in records]
+    for start in range(0, len(record_ids), 500):
+        batch_ids = record_ids[start:start + 500]
+        existing.update({record.record_id: record for record in database.scalars(select(model).where(model.record_id.in_(batch_ids))).all()})
     for record in records:
         payload = normalize_payload(record.payload)
         target = existing.get(record.record_id)
