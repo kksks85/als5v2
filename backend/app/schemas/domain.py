@@ -102,6 +102,16 @@ class ComponentRepairUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=5000)
 
 
+class BeyondEconomicalRepairCreate(BaseModel):
+    performed_by: str = Field(min_length=1, max_length=180)
+    reason: str = Field(min_length=1, max_length=5000)
+    replacement_serial_number: str = Field(min_length=1, max_length=160)
+    replacement_component_type: str = Field(min_length=1, max_length=160)
+    replacement_subsystem: str | None = Field(default=None, max_length=160)
+    replacement_part_number: str | None = Field(default=None, max_length=160)
+    replacement_sap_part_number: str | None = Field(default=None, max_length=160)
+
+
 class Address(BaseModel):
     line_1: str = Field(min_length=1, max_length=200)
     line_2: str | None = Field(default=None, max_length=200)

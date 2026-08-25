@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -6,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLogRecord, ComponentInstallation, ComponentInstance, ComponentMovement, ComponentProcurement, ComponentRepair, ComponentReplacement, IncidentRecord, ProductMasterRecord, ProductRecord
-from app.schemas.domain import ComponentQualityDecision, ComponentReceiptCreate, ComponentRepairUpdate, ComponentReplacementCreate
+from app.schemas.domain import BeyondEconomicalRepairCreate, ComponentQualityDecision, ComponentReceiptCreate, ComponentRepairUpdate, ComponentReplacementCreate
 
 
 MRLS_LOCATION = "MRLS"
@@ -33,6 +34,20 @@ def _component_payload(component: ComponentInstance) -> dict[str, Any]:
         "customer": component.customer,
         "contract_number": component.contract_number,
     }
+
+
+def _next_child_incident_id(database: Session, parent_incident_id: str) -> str:
+    match = re.fullmatch(r"(.+)-(\d{4})", parent_incident_id)
+    if not match:
+        raise _conflict("The parent incident number must end with a four-digit sequence.")
+    base = match.group(1)
+    sequence = int(match.group(2))
+    existing_ids = database.scalars(select(IncidentRecord.record_id).where(IncidentRecord.record_id.like(f"{base}-%"))).all()
+    for record_id in existing_ids:
+        candidate = re.fullmatch(rf"{re.escape(base)}-(\d{{4}})", record_id)
+        if candidate:
+            sequence = max(sequence, int(candidate.group(1)))
+    return f"{base}-{sequence + 1:04d}"
 
 
 def list_components(database: Session, lifecycle_status: str | None = None, component_type: str | None = None, customer: str | None = None, contract_number: str | None = None) -> list[dict[str, Any]]:
@@ -76,7 +91,7 @@ def component_detail(database: Session, serial_number: str) -> dict[str, Any]:
         "component": _component_payload(component),
         "movements": [{"from_status": row.from_status, "to_status": row.to_status, "from_location": row.from_location_reference, "to_location": row.to_location_reference, "reason": row.reason, "performed_by": row.performed_by, "moved_at": row.moved_at, "incident_record_id": row.incident_record_id} for row in movements],
         "installations": [{"uav_serial_number": row.uav_serial_number, "component_position": row.component_position, "customer": row.customer, "site": row.site, "installed_at": row.installed_at, "removed_at": row.removed_at, "removal_reason": row.removal_reason, "incident_record_id": row.incident_record_id} for row in installations],
-        "repairs": [{"id": row.id, "incident_record_id": row.incident_record_id, "repair_status": row.repair_status, "failure_description": row.failure_description, "technician_diagnosis": row.technician_diagnosis, "repair_request": row.repair_request, "repair_started_at": row.repair_started_at, "repair_completed_at": row.repair_completed_at, "repair_outcome": row.repair_outcome, "repair_cost": row.repair_cost, "replacement_parts": row.replacement_parts, "final_disposition": row.final_disposition} for row in repairs],
+        "repairs": [{"id": row.id, "incident_record_id": row.incident_record_id, "repair_status": row.repair_status, "failure_description": row.failure_description, "technician_diagnosis": row.technician_diagnosis, "repair_request": row.repair_request, "repair_started_at": row.repair_started_at, "repair_completed_at": row.repair_completed_at, "repair_outcome": row.repair_outcome, "repair_cost": row.repair_cost, "replacement_parts": row.replacement_parts, "final_disposition": row.final_disposition, "ber_reason": row.ber_reason, "ber_decided_at": row.ber_decided_at, "ber_decided_by": row.ber_decided_by, "ber_replacement_component_id": row.ber_replacement_component_id} for row in repairs],
     }
 
 
@@ -216,9 +231,9 @@ def _update_product_master_projection(database: Session, command: ComponentRepla
 
 def _bootstrap_installed_component(database: Session, command: ComponentReplacementCreate) -> ComponentInstance | None:
     product = database.scalar(select(ProductRecord).where(
-        ProductRecord.payload["product_serial_number"].astext == command.uav_serial_number,
-        ProductRecord.payload["material_serial_number"].astext == command.failed_component_serial,
-        ProductRecord.payload["material_description"].astext == command.component_position,
+        ProductRecord.payload["product_serial_number"].as_string() == command.uav_serial_number,
+        ProductRecord.payload["material_serial_number"].as_string() == command.failed_component_serial,
+        ProductRecord.payload["material_description"].as_string() == command.component_position,
     ).with_for_update())
     if not product:
         return None
@@ -367,7 +382,50 @@ def perform_replacement(database: Session, command: ComponentReplacementCreate) 
         installed_at=now,
         incident_record_id=command.incident_record_id,
     ))
-    repair_incident = database.scalar(select(IncidentRecord).where(IncidentRecord.payload["parentIncidentId"].astext == command.incident_record_id).order_by(IncidentRecord.created_at.desc())) or incident
+    repair_incident = database.scalar(select(IncidentRecord).where(IncidentRecord.payload["parentIncidentId"].as_string() == command.incident_record_id).order_by(IncidentRecord.created_at.desc()))
+    if not repair_incident:
+        repair_incident_id = _next_child_incident_id(database, command.incident_record_id)
+        parent_incident_payload = incident.payload
+        repair_incident = IncidentRecord(
+            record_id=repair_incident_id,
+            payload={
+                "id": repair_incident_id,
+                "opened": now.isoformat(),
+                "title": f"Repair follow-up for {failed_component.serial_number}",
+                "description": f"Follow-up repair incident created after MRLS replacement on {command.incident_record_id}.",
+                "state": "In progress",
+                "status": "Advisory Group Review",
+                "stage": "Advisory Group Review",
+                "repairExecution": "Incident Registration",
+                "assignmentGroup": "Advisory Group",
+                "group": "Advisory Group",
+                "customer": incident_customer,
+                "contract": incident_contract,
+                "requestor": parent_incident_payload.get("requestor") or "",
+                "contact": parent_incident_payload.get("contact") or "",
+                "priority": parent_incident_payload.get("priority") or "Normal",
+                "occurrencePhase": parent_incident_payload.get("occurrencePhase") or "",
+                "system": parent_incident_payload.get("system") or "",
+                "category": parent_incident_payload.get("category") or "",
+                "subsystem": failed_component.subsystem or parent_incident_payload.get("subsystem") or "",
+                "component": failed_component.component_type,
+                "materialSerialNumber": failed_component.serial_number,
+                "componentSerialNumbers": parent_incident_payload.get("componentSerialNumbers") or {},
+                "warranty": parent_incident_payload.get("warranty") or "",
+                "lastServiced": parent_incident_payload.get("lastServiced") or "",
+                "attachments": parent_incident_payload.get("attachments") or [],
+                "serialNumber": command.uav_serial_number,
+                "parentIncidentId": command.incident_record_id,
+                "replacementSource": "mrls",
+                "replacementParts": [{"currentSerialNumber": failed_component.serial_number, "newSerialNumber": replacement_component.serial_number, "materialDescription": failed_component.component_type, "partNumber": failed_component.part_number or ""}],
+                "auditLog": [{"id": f"repair-child-{command.transaction_id}", "assignedGroup": "Advisory Group", "updatedBy": command.technician, "updatedAt": now.isoformat(), "changes": [{"field": "Parent incident", "previous": "", "next": command.incident_record_id}, {"field": "Creation source", "previous": "", "next": "MRLS replacement"}]}],
+            },
+        )
+        database.add(repair_incident)
+        parent_payload = dict(incident.payload)
+        parent_payload["childIncidentIds"] = [*(parent_payload.get("childIncidentIds") or []), repair_incident_id]
+        incident.payload = parent_payload
+        database.flush()
     repair_incident_id = repair_incident.record_id
     repair = ComponentRepair(
         component_id=failed_component.id,
@@ -468,6 +526,164 @@ def close_repair_incident(database: Session, repair_incident_id: str, performed_
     _audit(database, component.serial_number, "returned_to_mrls", performed_by, {"repairIncidentId": repair_incident_id, "customer": mrls_payload["customer"], "contractNumber": mrls_payload["contract_number"]})
     database.flush()
     return {"component": _component_payload(component), "repair_incident_id": repair_incident_id}
+
+
+def mark_beyond_economical_repair(database: Session, repair_incident_id: str, command: BeyondEconomicalRepairCreate) -> dict[str, Any]:
+    repair = database.scalar(select(ComponentRepair).where(ComponentRepair.incident_record_id == repair_incident_id).with_for_update())
+    if not repair:
+        raise _not_found("No component repair is linked to this incident.")
+    repair_incident = database.scalar(select(IncidentRecord).where(IncidentRecord.record_id == repair_incident_id).with_for_update())
+    if not repair_incident or not repair_incident.payload.get("parentIncidentId"):
+        raise _conflict("Beyond economical repair is available only for a follow-up repair incident.")
+    if str(repair_incident.payload.get("state") or "").strip().casefold() != "in progress":
+        raise _conflict("Beyond economical repair is available only while the repair incident is In Progress.")
+    if repair.final_disposition or repair.ber_decided_at:
+        raise _conflict("A final disposition has already been recorded for this repair.")
+
+    removed_component = database.scalar(select(ComponentInstance).where(ComponentInstance.id == repair.component_id).with_for_update())
+    if not removed_component:
+        raise _not_found("The failed component linked to this repair was not found.")
+    if removed_component.lifecycle_status not in {"sent_for_repair", "under_repair", "quality_check", "repaired"}:
+        raise _conflict("The failed component cannot be classified beyond economical repair from its current lifecycle state.")
+    if removed_component.component_type.casefold() != command.replacement_component_type.casefold():
+        raise _conflict("The BER replacement component type must match the removed component type.")
+    existing_replacement = database.scalar(select(ComponentInstance).where(ComponentInstance.serial_number == command.replacement_serial_number).with_for_update())
+    if existing_replacement:
+        raise _conflict("A component with this replacement serial number already exists.")
+
+    now = datetime.now(UTC)
+    transaction_id = f"ber-repair-{repair.id}"
+    incident_customer = str(repair_incident.payload.get("customer") or removed_component.customer or "").strip() or None
+    incident_contract = str(repair_incident.payload.get("contract") or removed_component.contract_number or "").strip() or None
+    replacement_component = ComponentInstance(
+        serial_number=command.replacement_serial_number,
+        component_type=command.replacement_component_type,
+        subsystem=command.replacement_subsystem,
+        part_number=command.replacement_part_number,
+        sap_part_number=command.replacement_sap_part_number,
+        lifecycle_status="mrls_available",
+        location_type="mrls",
+        location_reference=MRLS_LOCATION,
+        customer=incident_customer,
+        contract_number=incident_contract,
+        received_at=now,
+    )
+    database.add(replacement_component)
+    database.flush()
+    database.add(ComponentMovement(
+        component_id=replacement_component.id,
+        from_status=None,
+        to_status="mrls_available",
+        from_location_type=None,
+        to_location_type="mrls",
+        from_location_reference=None,
+        to_location_reference=MRLS_LOCATION,
+        reason=f"Added to MRLS as BER replacement for {removed_component.serial_number}. {command.reason}",
+        transaction_id=transaction_id,
+        incident_record_id=repair_incident_id,
+        performed_by=command.performed_by,
+        customer=incident_customer,
+        site=repair_incident.payload.get("site") or None,
+    ))
+    movement_command = ComponentReplacementCreate(
+        transaction_id=transaction_id,
+        incident_record_id=repair_incident_id,
+        uav_serial_number=repair.previous_uav_serial_number or "MRLS",
+        component_position=removed_component.component_type,
+        failed_component_serial=removed_component.serial_number,
+        replacement_component_serial=replacement_component.serial_number,
+        reason=command.reason,
+        technician=command.performed_by,
+        failure_date=repair.failure_date,
+        customer=incident_customer,
+        site=repair_incident.payload.get("site") or None,
+    )
+    _record_movement(
+        database,
+        removed_component,
+        to_status="beyond_repair",
+        to_location_type="scrap",
+        to_location_reference="Damaged/Expired Components",
+        reason=f"Classified beyond economical repair. {command.reason}",
+        command=movement_command,
+    )
+    repair.repair_status = "beyond_repair"
+    repair.final_disposition = "beyond_repair"
+    repair.repair_completed_at = now
+    repair.repair_outcome = "beyond_economical_repair"
+    repair.ber_reason = command.reason
+    repair.ber_decided_at = now
+    repair.ber_decided_by = command.performed_by
+    repair.ber_replacement_component_id = replacement_component.id
+
+    damaged_record = database.scalar(select(ProductMasterRecord).where(ProductMasterRecord.resource == "damaged_expired_components", ProductMasterRecord.record_id == removed_component.serial_number).with_for_update())
+    damaged_payload = {
+        "id": removed_component.serial_number,
+        "material_serial_number": removed_component.serial_number,
+        "material_description": removed_component.component_type,
+        "part_number": removed_component.part_number or "",
+        "sap_part_number": removed_component.sap_part_number or "",
+        "lifecycle_status": "beyond_repair",
+        "customer": incident_customer or "",
+        "contract_number": incident_contract or "",
+        "previous_uav_serial_number": repair.previous_uav_serial_number or "",
+        "repair_incident_id": repair_incident_id,
+        "original_incident_id": repair_incident.payload.get("parentIncidentId"),
+        "ber_reason": command.reason,
+        "ber_decided_at": now.isoformat(),
+        "ber_decided_by": command.performed_by,
+        "replacement_component_serial": replacement_component.serial_number,
+        "lifecycle_transaction_id": transaction_id,
+    }
+    if damaged_record:
+        damaged_record.payload = damaged_payload
+    else:
+        database.add(ProductMasterRecord(resource="damaged_expired_components", record_id=removed_component.serial_number, payload=damaged_payload))
+
+    mrls_record = database.scalar(select(ProductMasterRecord).where(ProductMasterRecord.resource == "mrls_products", ProductMasterRecord.record_id == replacement_component.serial_number).with_for_update())
+    mrls_payload = {
+        "id": replacement_component.serial_number,
+        "product_serial_number": f"MRLS-COMP-{replacement_component.serial_number}",
+        "part_number": replacement_component.part_number or "--",
+        "sap_part_number": replacement_component.sap_part_number or "",
+        "material_description": replacement_component.component_type,
+        "material_serial_number": replacement_component.serial_number,
+        "customer": incident_customer or "",
+        "contract_number": incident_contract or "",
+        "quantity": "1",
+        "unit_of_measurement": "EA",
+        "remarks": f"BER replacement for {removed_component.serial_number} in {repair_incident_id}",
+        "lifecycle_transaction_id": transaction_id,
+    }
+    if mrls_record:
+        mrls_record.payload = mrls_payload
+    else:
+        database.add(ProductMasterRecord(resource="mrls_products", record_id=replacement_component.serial_number, payload=mrls_payload))
+
+    repair_payload = dict(repair_incident.payload)
+    repair_payload["repairLifecycle"] = {
+        **(repair_payload.get("repairLifecycle") or {}),
+        "repairId": repair.id,
+        "componentSerial": removed_component.serial_number,
+        "ber": {
+            "reason": command.reason,
+            "decidedAt": now.isoformat(),
+            "decidedBy": command.performed_by,
+            "replacementComponentSerial": replacement_component.serial_number,
+            "transactionId": transaction_id,
+        },
+    }
+    repair_incident.payload = repair_payload
+    _audit(database, removed_component.serial_number, "beyond_economical_repair", command.performed_by, {"repairIncidentId": repair_incident_id, "reason": command.reason, "replacementComponentSerial": replacement_component.serial_number, "transactionId": transaction_id})
+    database.flush()
+    return {
+        "repair_incident_id": repair_incident_id,
+        "transaction_id": transaction_id,
+        "repair_lifecycle": repair_payload["repairLifecycle"],
+        "removed_component": _component_payload(removed_component),
+        "replacement_component": _component_payload(replacement_component),
+        "damaged_component_record_id": removed_component.serial_number,
+    }
 
 
 def attach_repair_to_incident(database: Session, source_incident_id: str, repair_incident_id: str) -> dict[str, Any]:

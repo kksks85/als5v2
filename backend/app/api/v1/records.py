@@ -67,6 +67,7 @@ PRODUCT_MASTER_RESOURCES = {
     "warhead_sam_products",
     "tools_products",
     "mrls_products",
+    "damaged_expired_components",
     "sme_ste_products",
     "gse_products",
     "warranty_quality_claims",

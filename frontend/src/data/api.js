@@ -47,6 +47,7 @@ export const componentLifecycleApi = {
   decideQuality: (serialNumber, decision) => request(`/component-lifecycle/components/${encodeURIComponent(serialNumber)}/quality`, { method: 'POST', body: JSON.stringify(decision) }),
   updateRepair: (repairId, action, update) => request(`/component-lifecycle/repairs/${encodeURIComponent(repairId)}/${action}`, { method: 'POST', body: JSON.stringify(update) }),
   closeRepairIncident: (repairIncidentId, performedBy) => request(`/component-lifecycle/repairs/by-incident/${encodeURIComponent(repairIncidentId)}/close?performed_by=${encodeURIComponent(performedBy)}`, { method: 'POST' }),
+  markBeyondEconomicalRepair: (repairIncidentId, decision) => request(`/component-lifecycle/repairs/by-incident/${encodeURIComponent(repairIncidentId)}/beyond-economical-repair`, { method: 'POST', body: JSON.stringify(decision) }),
   attachRepairToIncident: (sourceIncidentId, repairIncidentId) => request(`/component-lifecycle/repairs/attach?source_incident_id=${encodeURIComponent(sourceIncidentId)}&repair_incident_id=${encodeURIComponent(repairIncidentId)}`, { method: 'POST' }),
   replaceComponent: (replacement) => request('/component-lifecycle/replacements', {
     method: 'POST',

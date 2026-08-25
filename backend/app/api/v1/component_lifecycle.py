@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas.domain import ComponentQualityDecision, ComponentReceiptCreate, ComponentRepairUpdate, ComponentReplacementCreate
-from app.services.component_lifecycle import active_uav_configuration, attach_repair_to_incident, close_repair_incident, component_detail, list_components, perform_replacement, quality_decision, receive_component, repair_queue, update_repair
+from app.schemas.domain import BeyondEconomicalRepairCreate, ComponentQualityDecision, ComponentReceiptCreate, ComponentRepairUpdate, ComponentReplacementCreate
+from app.services.component_lifecycle import active_uav_configuration, attach_repair_to_incident, close_repair_incident, component_detail, list_components, mark_beyond_economical_repair, perform_replacement, quality_decision, receive_component, repair_queue, update_repair
 
 router = APIRouter(prefix="/component-lifecycle", tags=["component-lifecycle"])
 
@@ -83,6 +83,17 @@ def progress_component_repair(repair_id: int, action: str, command: ComponentRep
 def close_component_repair_incident(repair_incident_id: str, performed_by: str, database: Session = Depends(get_db)) -> dict[str, Any]:
     try:
         result = close_repair_incident(database, repair_incident_id, performed_by)
+        database.commit()
+        return result
+    except Exception:
+        database.rollback()
+        raise
+
+
+@router.post("/repairs/by-incident/{repair_incident_id}/beyond-economical-repair")
+def classify_beyond_economical_repair(repair_incident_id: str, command: BeyondEconomicalRepairCreate, database: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        result = mark_beyond_economical_repair(database, repair_incident_id, command)
         database.commit()
         return result
     except Exception:

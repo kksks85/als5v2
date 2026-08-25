@@ -117,6 +117,10 @@ class ComponentRepair(Base):
     repair_cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
     replacement_parts: Mapped[dict] = mapped_column(JSON, default=list)
     final_disposition: Mapped[str | None] = mapped_column(String(80))
+    ber_reason: Mapped[str | None] = mapped_column(Text)
+    ber_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ber_decided_by: Mapped[str | None] = mapped_column(String(180))
+    ber_replacement_component_id: Mapped[int | None] = mapped_column(ForeignKey("component_instances.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

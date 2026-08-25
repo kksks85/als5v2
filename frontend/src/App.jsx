@@ -17,6 +17,7 @@ import SubcontractsPage from './pages/SubcontractsPage'
 import ProductMasterPage, { seedProducts } from './pages/ProductMasterPage'
 import ProductMasterMcsPage from './pages/ProductMasterMcsPage'
 import ProductMasterGdtPage, { batteryProductColumns, gseProductColumns, mrlsProductColumns, simulatorProductColumns, smeSteProductColumns, tmvProductColumns, toolsProductColumns, warheadSamProductColumns } from './pages/ProductMasterGdtPage'
+import DamagedExpiredComponentsPage from './pages/DamagedExpiredComponentsPage'
 import ComponentLifecyclePage from './pages/ComponentLifecyclePage'
 import ProductCategoryPage from './pages/ProductCategoryPage'
 import UserManagementPage, { initialUsers } from './pages/UserManagementPage'
@@ -49,6 +50,7 @@ const workspaceNav = [
   { key: 'Contracts', label: 'Contracts', icon: FileText },
   { key: 'Sub-contracts', label: 'Sub-contracts', icon: FileText },
   { key: 'Inventory Master', label: 'Inventory Master', icon: Package },
+  { key: 'Product master Damaged / Expired Components', label: 'Damaged/Expired Components', icon: Package },
   { key: 'Product categories', label: 'Product categories', icon: Package },
   { key: 'Knowledge management', label: 'Knowledge management', icon: BookOpen },
   { key: 'Mail correspondence', label: 'Mail Correspondence', icon: Mail },
@@ -474,6 +476,7 @@ const reconcileBuiltInReports = (storedReports) => {
 function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpersonate, onStopImpersonating }) {
   const dashboardStorageKey = `als50-dashboard-${user.email}`
   const [activePage, setActivePage] = useState('Overview')
+  const [navigationVisit, setNavigationVisit] = useState(0)
   const [reportingVisit, setReportingVisit] = useState(0)
   const [drillReportId, setDrillReportId] = useState(null)
   const [nlpReportDefinition, setNlpReportDefinition] = useState(null)
@@ -1118,6 +1121,19 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       setActivePage('Incidents')
     }
   }
+  const resetNavigationView = () => {
+    setIncidentDrill(null)
+    setProductAssetDrill(null)
+    setDrillReportId(null)
+    setNlpReportDefinition(null)
+    setPendingSubcontractContract('')
+    setNavigationVisit((current) => current + 1)
+  }
+  const handleSidebarNavigationClick = (event) => {
+    const button = event.target.closest('button')
+    if (!button || (!button.closest('.nav-submenu') && button.getAttribute('aria-expanded') !== null)) return
+    resetNavigationView()
+  }
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
@@ -1143,7 +1159,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
       case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
       case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
-      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} onOpenDamagedComponents={() => setActivePage('Product master Damaged / Expired Components')} />
+      case 'Product master Damaged / Expired Components': return <DamagedExpiredComponentsPage onBack={() => setActivePage('Product master MRLS')} />
         case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} />
       case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
       case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
@@ -1180,7 +1197,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
           <div><strong>S - UAV</strong><span>CSM Portal</span></div>
         </div>
 
-        <nav aria-label="Primary navigation">
+        <nav aria-label="Primary navigation" onClickCapture={handleSidebarNavigationClick}>
           <p className="nav-label">Workspace</p>
           {workspaceNav.filter(({ key, claimsOnly }) => claimsOnly ? hasWarrantyQualityClaimsAccess : hasFullWorkspaceAccess || standardWorkspaceKeys.has(key)).map(({ key, label, icon: Icon, count }) => {
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
@@ -1246,7 +1263,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         <section className="content">
           {searchOpen && <div className="search-panel"><Search size={18} /><input autoFocus placeholder="Search incidents, customers, contracts..." /><kbd>Esc</kbd></div>}
           {notificationToasts.length > 0 && <aside className="notification-toast-stack" aria-live="polite">{notificationToasts.map((notification) => <button type="button" key={notification.id} onClick={() => openNotification(notification)}><Bell size={16} /><span><strong>{notification.title}</strong><small>{notification.workNotes}</small></span></button>)}</aside>}
-          {renderPage()}
+          <div key={`${activePage}-${navigationVisit}`}>{renderPage()}</div>
         </section>
       </main>
       {impersonationCandidate && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Confirm user impersonation"><h2>Impersonate {impersonationCandidate.name}?</h2><p>You are about to act as {impersonationCandidate.name} ({impersonationCandidate.role}). Their assigned access and permissions will apply until you return to your administrator session.</p><footer><button type="button" className="incident-cancel-button" onClick={() => setImpersonationCandidate(null)}>Cancel</button><button type="button" className="incident-next-stage-button" onClick={() => { onImpersonate(impersonationCandidate); setImpersonationCandidate(null) }}>Confirm impersonation</button></footer></section></div>}

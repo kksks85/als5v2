@@ -116,7 +116,7 @@ const emptyProductRecord = (recordCount, idPrefix, columns) => ({
   ...Object.fromEntries(columns.map(({ key }) => [key, key === 'product_serial_number' ? `${idPrefix.toUpperCase()}-${String(recordCount + 1).padStart(3, '0')}` : ''])),
 })
 
-export default function ProductMasterGdtPage({ records, setRecords, canManageInventory = false, canImportInventory = false, masterName = 'GDT', idPrefix = 'gdt', columns = gdtColumns }) {
+export default function ProductMasterGdtPage({ records, setRecords, canManageInventory = false, canImportInventory = false, masterName = 'GDT', idPrefix = 'gdt', columns = gdtColumns, onOpenDamagedComponents }) {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [visibleColumns, setVisibleColumns] = useState(columns.map(({ key }) => key))
@@ -173,6 +173,7 @@ export default function ProductMasterGdtPage({ records, setRecords, canManageInv
   if (editingRecord) return <GdtRecordEditor record={editingRecord} columns={columns} masterName={masterName} isNew={!records.some((record) => record.id === editingRecord.id)} onBack={() => setEditingRecord(null)} onSave={saveRecord} />
 
   return <>
+    {onOpenDamagedComponents && <div className="product-master-secondary-nav"><button className="compact-button secondary" onClick={onOpenDamagedComponents}>Damaged/Expired Components</button></div>}
     <div className="incident-list-head product-master-heading"><div className="incident-list-title"><h1>Product Master - {masterName}</h1><p>Material and item inventory register for {masterName}.</p></div>{canImportInventory && <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>}</div>
     <section className="incident-list-page product-register-page" aria-label={`${masterName} product register`}>
       <div className="incident-command-bar product-command-bar">
@@ -189,7 +190,7 @@ export default function ProductMasterGdtPage({ records, setRecords, canManageInv
 }
 
 function GdtRecordView({ record, columns, masterName, canManageInventory, onBack, onEdit }) {
-  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product Master - {masterName}</button><h1>{record.material_description || `${masterName} material record`}</h1><p>{record.part_number || 'Material details'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button>{canManageInventory && <button className="incident-submit-button" onClick={onEdit}>Edit material</button>}</div></header><section className="product-record-sheet">{columns.map(({ key, label }) => <div key={key}><span>{label}</span><strong>{record[key] || '--'}</strong></div>)}</section></section>
+  return <section className="product-record-page"><header className="group-config-header"><div><button className="incident-back-button" onClick={onBack}><ArrowLeft size={15} /> Product Master - {masterName}</button><h1>{record.material_description || `${masterName} material record`}</h1><p>{record.part_number || 'Material details'}</p></div><div><button className="incident-cancel-button" onClick={onBack}>Close</button>{canManageInventory && <button className="incident-submit-button" onClick={onEdit}>Edit material</button>}</div></header><section className="product-record-sheet">{columns.map(({ key, label }) => <div key={key} className={key === 'remarks' ? 'full-width remarks-value' : ''}><span>{label}</span><strong>{record[key] || '--'}</strong></div>)}</section></section>
 }
 
 function GdtRecordEditor({ record, columns, masterName, isNew, onBack, onSave }) {
