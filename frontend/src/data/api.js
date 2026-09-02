@@ -1,14 +1,41 @@
 const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
 let accessToken = ''
 
+// Fix #8: Enforce HTTPS in production
+function ensureSecureConnection() {
+  const localHostnames = new Set(['localhost', '127.0.0.1', '[::1]'])
+  if (import.meta.env.PROD && !localHostnames.has(window.location.hostname) && window.location.protocol !== 'https:') {
+    // Redirect to HTTPS version of the same URL
+    window.location.href = 'https:' + window.location.href.substring(window.location.protocol.length)
+  }
+}
+
+function csrfToken() {
+  return document.cookie.split('; ').find((cookie) => cookie.startsWith('als50_csrf='))?.split('=').slice(1).join('') || ''
+}
+
+function errorMessageFromBody(body, status) {
+  const detail = body?.detail
+  if (typeof detail === 'string') return detail
+  if (typeof detail?.message === 'string') return detail.message
+  if (typeof detail?.code === 'string') return detail.code
+  if (detail) return JSON.stringify(detail)
+  return `Request failed (${status})`
+}
+
 async function request(path, options = {}) {
+  // Fix #8: Ensure secure connection for production
+  ensureSecureConnection()
+  
+  const token = csrfToken()
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...options.headers },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(token ? { 'X-CSRF-Token': token } : {}), ...options.headers },
     ...options,
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body.detail || `Request failed (${response.status})`)
+    throw new Error(errorMessageFromBody(body, response.status))
   }
   return response.json()
 }
@@ -75,6 +102,11 @@ export const authenticationApi = {
     accessToken = session.access_token
     return session
   },
+  adEligibilityLogin: async (email) => {
+    const session = await request('/authentication/ad-eligibility-login', { method: 'POST', body: JSON.stringify({ email }) })
+    accessToken = session.access_token
+    return session
+  },
   logout: async () => {
     const result = await request('/authentication/logout', { method: 'POST' })
     accessToken = ''
@@ -82,6 +114,8 @@ export const authenticationApi = {
   },
   getSettings: () => request('/authentication/settings'),
   updateSettings: (settings) => request('/authentication/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  getLocalAdminPasswordStatus: () => request('/authentication/local-admin-password'),
+  updateLocalAdminPassword: (passwords) => request('/authentication/local-admin-password', { method: 'PUT', body: JSON.stringify(passwords) }),
   listRoleMappings: () => request('/authentication/role-mappings'),
   saveRoleMapping: (directory_group, mapping) => request(`/authentication/role-mappings/${encodeURIComponent(directory_group)}`, { method: 'PUT', body: JSON.stringify(mapping) }),
   getHealth: () => request('/authentication/health'),

@@ -89,8 +89,7 @@ For a **new SQL Server database**, application startup creates the current porta
 The API image installs Microsoft ODBC Driver 18 on AMD64 hosts and FreeTDS ODBC on ARM64 hosts. PostgreSQL-specific runtime JSONB and `ON CONFLICT` dependencies have been replaced with portable JSON and ORM upsert operations.
 
 ## Enterprise authentication deployment
-
-The current identity selector remains intentionally enabled for demonstrations. When `authentication_settings.enabled` is set and its provider is `rsa_ad`, `/api/v1/authentication/login` becomes the enterprise entry point and demo login is refused.
+The current identity selector remains intentionally enabled for demonstrations. Select `ldap_ad` to authenticate directly against Active Directory over LDAPS, or select `rsa_ad` only when an approved RSA Authentication Manager connector is configured. When `authentication_settings.enabled` is set, demo login is refused.
 
 Authentication sequence:
 

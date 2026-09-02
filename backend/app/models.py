@@ -268,6 +268,14 @@ class AuthenticationSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class LocalAdminCredential(Base):
+    __tablename__ = "local_admin_credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class UserSession(Base):
     __tablename__ = "user_sessions"
 

@@ -1,74 +1,14 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Building2, Cloud, Edit2, Info, KeyRound, Plus, Save, Settings, Shield, Trash2, X } from 'lucide-react'
+import { AlertCircle, Building2, CheckCircle2, Edit2, Info, Plus, Save, ServerCog, Trash2, X } from 'lucide-react'
 import { authenticationApi } from '../data/api'
 
-const providerTabs = [
-  { id: 'general', label: 'General', icon: Settings },
-  { id: 'rsa', label: 'RSA Authentication Manager', icon: KeyRound },
-  { id: 'ldap', label: 'Active Directory LDAP', icon: Building2 },
-  { id: 'azure', label: 'Azure AD', icon: Cloud },
-  { id: 'okta', label: 'Okta', icon: Shield },
+const activeDirectoryVariables = [
+  ['LDAP_SERVER_URI', 'LDAPS server URI', 'ldaps://ad.company.com:636'],
+  ['LDAP_BASE_DN', 'Directory search base', 'OU=Users,DC=company,DC=com'],
+  ['LDAP_BIND_DN', 'Read-only service account', 'CN=ServiceAccount,OU=Users,DC=company,DC=com'],
+  ['LDAP_BIND_PASSWORD', 'Service account password', 'Stored in the deployment secret store'],
+  ['LDAP_USER_DOMAIN', 'Microsoft AD domain', 'company.com'],
 ]
-
-const providerDetails = {
-  rsa: {
-    title: 'RSA Authentication Manager',
-    description: 'Configure the approved RSA adapter before enabling RSA-backed enterprise sign-in.',
-    status: 'Adapter required',
-    variables: [
-      ['RSA_AM_SERVER', 'RSA Authentication Manager base URL', 'https://rsa-am.corp.example.com:7001'],
-      ['RSA_AM_API_KEY', 'Adapter API key', 'Stored as a deployment secret'],
-      ['RSA_AM_SECRET', 'Adapter client secret', 'Stored as a deployment secret'],
-    ],
-    notes: ['Use the approved REST or SOAP adapter for the installed RSA Authentication Manager version.', 'The service fails closed until the adapter and all secrets are configured.'],
-  },
-  ldap: {
-    title: 'Active Directory LDAP',
-    description: 'Connect to Active Directory over LDAPS for profile lookup and group-based authorization.',
-    status: 'LDAPS required',
-    variables: [
-      ['LDAP_SERVER_URI', 'Directory server URI', 'ldaps://ad.corp.example.com:636'],
-      ['LDAP_BASE_DN', 'User-search base DN', 'OU=Users,DC=corp,DC=example,DC=com'],
-      ['LDAP_BIND_DN', 'Read-only service account DN', 'CN=ServiceAccount,OU=Users,DC=corp,DC=example,DC=com'],
-      ['LDAP_BIND_PASSWORD', 'Service account password', 'Stored as a deployment secret'],
-    ],
-    notes: ['Use a trusted TLS certificate and port 636. Plain LDAP is not accepted.', 'Grant the service account read access to users and their group membership.'],
-  },
-  azure: {
-    title: 'Azure AD',
-    description: 'Reserved for the upcoming OpenID Connect integration. These values are not active in this release.',
-    status: 'Planned',
-    variables: [
-      ['AZURE_AD_TENANT_ID', 'Microsoft Entra tenant ID', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'],
-      ['AZURE_AD_CLIENT_ID', 'Application (client) ID', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'],
-      ['AZURE_AD_CLIENT_SECRET', 'Application client secret', 'Stored as a deployment secret'],
-      ['AZURE_AD_REDIRECT_URI', 'Approved redirect URI', 'https://portal.example.com/auth/callback'],
-    ],
-    notes: ['Create a single-tenant app registration and configure only approved redirect URIs.', 'Do not enable this provider until the OpenID Connect adapter is deployed.'],
-  },
-  okta: {
-    title: 'Okta',
-    description: 'Reserved for the upcoming OpenID Connect integration. These values are not active in this release.',
-    status: 'Planned',
-    variables: [
-      ['OKTA_ISSUER', 'Okta authorization server issuer', 'https://company.okta.com/oauth2/default'],
-      ['OKTA_CLIENT_ID', 'OIDC application client ID', 'Provided by Okta'],
-      ['OKTA_CLIENT_SECRET', 'OIDC application client secret', 'Stored as a deployment secret'],
-      ['OKTA_REDIRECT_URI', 'Approved sign-in redirect URI', 'https://portal.example.com/auth/callback'],
-    ],
-    notes: ['Restrict the OIDC application to the production portal redirect URI.', 'Do not enable this provider until the OpenID Connect adapter is deployed.'],
-  },
-}
-
-function ProviderSetupTab({ provider }) {
-  const detail = providerDetails[provider]
-  return <section className="auth-panel" aria-labelledby={`${provider}-title`}>
-    <div className="auth-panel-heading"><div><p className="auth-eyebrow">Production setup</p><h2 id={`${provider}-title`}>{detail.title}</h2><p>{detail.description}</p></div><span className={`auth-status ${detail.status === 'Planned' ? 'planned' : 'required'}`}>{detail.status}</span></div>
-    <div className="auth-secret-notice"><Info size={16} /><span>Set provider values in the deployment environment or secrets vault. Secret values are intentionally never displayed or stored in this browser.</span></div>
-    <div className="auth-config-list">{detail.variables.map(([variable, label, example]) => <div className="auth-config-row" key={variable}><div><strong>{label}</strong><code>{variable}</code></div><code className="auth-config-example">{example}</code></div>)}</div>
-    <div className="auth-requirements"><h3>Production requirements</h3><ul>{detail.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
-  </section>
-}
 
 export default function AuthenticationSettingsPage() {
   const [settings, setSettings] = useState(null)
@@ -76,7 +16,6 @@ export default function AuthenticationSettingsPage() {
   const [health, setHealth] = useState(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
-  const [activeTab, setActiveTab] = useState('general')
   const [editingSettings, setEditingSettings] = useState(null)
   const [editingMapping, setEditingMapping] = useState(null)
   const [addingMapping, setAddingMapping] = useState(false)
@@ -84,7 +23,7 @@ export default function AuthenticationSettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      authenticationApi.getSettings().then((result) => { setSettings(result); setEditingSettings(result) }),
+      authenticationApi.getSettings().then((result) => { const adSettings = { ...result, provider: 'ldap_ad' }; setSettings(adSettings); setEditingSettings(adSettings) }),
       authenticationApi.listRoleMappings().then(setRoleMappings),
       authenticationApi.getHealth().then(setHealth),
     ]).catch(() => setMessage('Failed to load authentication settings.')).finally(() => setLoading(false))
@@ -93,7 +32,7 @@ export default function AuthenticationSettingsPage() {
   const saveSettings = async () => {
     if (!editingSettings) return
     try {
-      const updated = await authenticationApi.updateSettings(editingSettings)
+      const updated = await authenticationApi.updateSettings({ ...editingSettings, provider: 'ldap_ad' })
       setSettings(updated); setEditingSettings(updated); setMessage('General authentication settings saved.')
     } catch (error) { setMessage(error.message) }
   }
@@ -120,27 +59,33 @@ export default function AuthenticationSettingsPage() {
   if (loading) return <div className="page-heading"><h1>Authentication Settings</h1><p className="subtitle">Loading...</p></div>
 
   return <div className="authentication-settings-page">
-    <div className="page-heading"><div><h1>Authentication Settings</h1><p className="subtitle">Manage policy, provider readiness, and directory role access.</p></div></div>
-    {health && <div className="auth-provider-summary"><div className="auth-summary-icon"><Shield size={20} /></div><div><strong>Authentication posture</strong><span>{health.enforced ? `Enterprise authentication enforced through ${health.provider}` : 'Demo access is active. Enterprise authentication is not enforced.'}</span></div><span className={`auth-status ${health.live_provider_configured ? 'configured' : 'required'}`}>{health.live_provider_configured ? 'Configured' : 'Not configured'}</span></div>}
+    <div className="page-heading"><div><h1>Microsoft Active Directory</h1><p className="subtitle">Connect this portal to the client’s existing Microsoft Active Directory.</p></div></div>
+    {health && <div className="auth-provider-summary"><div className="auth-summary-icon"><Building2 size={20} /></div><div><strong>Active Directory connection</strong><span>{health.ldap_configured ? 'Required directory values are available to the application.' : 'Add the required directory values to the deployment environment before enabling sign-in.'}</span></div><span className={`auth-status ${health.ldap_configured ? 'configured' : 'required'}`}>{health.ldap_configured ? 'Ready' : 'Action required'}</span></div>}
     {message && <div className="auth-message"><AlertCircle size={16} />{message}</div>}
-    <div className="auth-tabs" role="tablist" aria-label="Authentication configuration">{providerTabs.map(({ id, label, icon: Icon }) => <button key={id} role="tab" aria-selected={activeTab === id} className={activeTab === id ? 'active' : ''} onClick={() => setActiveTab(id)}><Icon size={16} />{label}</button>)}</div>
-    {activeTab !== 'general' && <ProviderSetupTab provider={activeTab} />}
-    {activeTab === 'general' && settings && editingSettings && <section className="auth-panel">
-      <div className="auth-panel-heading"><div><p className="auth-eyebrow">Policy controls</p><h2>General settings</h2><p>These controls are persisted in the application database and apply to all supported authentication flows.</p></div></div>
+    {settings && editingSettings && <>
+      <section className="auth-panel">
+      <div className="auth-panel-heading"><div><p className="auth-eyebrow">Directory integration</p><h2>Connection requirements</h2><p>The application reads these values from the deployment environment. Passwords are never displayed here.</p></div><ServerCog size={22} /></div>
+      <div className="auth-secret-notice"><Info size={16} /><span>Use LDAPS with the client’s existing read-only service account. The service account needs permission to read users and group membership.</span></div>
+      <div className="auth-config-list">{activeDirectoryVariables.map(([variable, label, example]) => <div className="auth-config-row" key={variable}><div><strong>{label}</strong><code>{variable}</code></div><code className="auth-config-example">{example}</code></div>)}</div>
+      </section>
+      <section className="auth-panel auth-ad-policy-panel">
+      <div className="auth-panel-heading"><div><p className="auth-eyebrow">Sign-in policy</p><h2>Active Directory sign-in</h2><p>Users authenticate with their Microsoft Active Directory credentials. The local administrator account always uses its separate password.</p></div></div>
       <div className="auth-policy-grid">
-        <label><span>Authentication provider</span><select value={editingSettings.provider} onChange={(event) => setEditingSettings({ ...editingSettings, provider: event.target.value })}><option value="demo">Demo (Click-to-login)</option><option value="rsa_ad">RSA Authentication Manager + Active Directory LDAP</option></select></label>
-        <label className="auth-toggle"><input type="checkbox" checked={editingSettings.enabled} onChange={(event) => setEditingSettings({ ...editingSettings, enabled: event.target.checked })} /><span><strong>Enforce enterprise authentication</strong><small>Disable demo access for all sign-ins.</small></span></label>
+        <div className="auth-readonly-field"><span>Authentication source</span><strong><Building2 size={16} />Microsoft Active Directory (LDAPS)</strong></div>
+        <label className="auth-toggle"><input type="checkbox" checked={editingSettings.enabled} onChange={(event) => setEditingSettings({ ...editingSettings, enabled: event.target.checked })} /><span><strong>Enable Active Directory sign-in</strong><small>Require directory authentication for all non-admin users.</small></span></label>
         <label><span>Session timeout (minutes)</span><input type="number" min="5" max="1440" value={editingSettings.session_timeout_minutes} onChange={(event) => setEditingSettings({ ...editingSettings, session_timeout_minutes: Number(event.target.value) })} /></label>
         <label><span>Failed-login lockout threshold</span><input type="number" min="1" max="20" value={editingSettings.lockout_threshold} onChange={(event) => setEditingSettings({ ...editingSettings, lockout_threshold: Number(event.target.value) })} /></label>
         <label><span>Lockout duration (minutes)</span><input type="number" min="1" max="1440" value={editingSettings.lockout_minutes} onChange={(event) => setEditingSettings({ ...editingSettings, lockout_minutes: Number(event.target.value) })} /></label>
         <label><span>Rate limit (attempts per minute)</span><input type="number" min="1" max="120" value={editingSettings.rate_limit_per_minute} onChange={(event) => setEditingSettings({ ...editingSettings, rate_limit_per_minute: Number(event.target.value) })} /></label>
       </div>
-      <div className="auth-actions"><button className="compact-button primary" onClick={saveSettings}><Save size={16} />Save general settings</button><button className="compact-button" onClick={() => setEditingSettings(settings)}><X size={16} />Discard changes</button></div>
+      <div className="auth-actions"><button className="compact-button primary" onClick={saveSettings}><Save size={16} />Save Active Directory settings</button><button className="compact-button" onClick={() => setEditingSettings(settings)}><X size={16} />Discard changes</button></div>
       <div className="auth-role-mappings">
         <div className="auth-section-heading"><div><h3>Directory role mappings</h3><p>Map Active Directory group distinguished names to application roles.</p></div><button className="compact-button primary" onClick={() => setAddingMapping(true)}><Plus size={14} />Add mapping</button></div>
         {addingMapping && <div className="auth-add-mapping"><input aria-label="Directory group DN" placeholder="CN=ALS50-Admins,OU=Groups,..." value={newMapping.directory_group} onChange={(event) => setNewMapping({ ...newMapping, directory_group: event.target.value })} /><input aria-label="Application role" placeholder="Application role" value={newMapping.application_role} onChange={(event) => setNewMapping({ ...newMapping, application_role: event.target.value })} /><button className="compact-button primary" onClick={addMapping}><Save size={14} />Save</button><button className="compact-button" onClick={() => setAddingMapping(false)} title="Cancel"><X size={14} /></button></div>}
         {roleMappings.length === 0 ? <p className="auth-empty-state">No role mappings configured.</p> : <div className="auth-table-wrap"><table><thead><tr><th>Directory group</th><th>Application role</th><th>Status</th><th aria-label="Actions" /></tr></thead><tbody>{roleMappings.map((mapping) => <tr key={mapping.directory_group}><td><code>{mapping.directory_group}</code></td><td>{editingMapping?.directory_group === mapping.directory_group ? <input aria-label="Application role" value={editingMapping.application_role} onChange={(event) => setEditingMapping({ ...editingMapping, application_role: event.target.value })} /> : mapping.application_role}</td><td>{editingMapping?.directory_group === mapping.directory_group ? <label className="auth-table-toggle"><input type="checkbox" checked={editingMapping.enabled} onChange={(event) => setEditingMapping({ ...editingMapping, enabled: event.target.checked })} />Enabled</label> : <span className={mapping.enabled ? 'auth-enabled' : 'auth-disabled'}>{mapping.enabled ? 'Enabled' : 'Disabled'}</span>}</td><td className="auth-row-actions">{editingMapping?.directory_group === mapping.directory_group ? <><button className="compact-button primary" onClick={saveMapping} title="Save"><Save size={14} /></button><button className="compact-button" onClick={() => setEditingMapping(null)} title="Cancel"><X size={14} /></button></> : <><button className="compact-button" onClick={() => setEditingMapping(mapping)} title="Edit"><Edit2 size={14} /></button><button className="compact-button" onClick={() => deleteMapping(mapping.directory_group)} title="Remove"><Trash2 size={14} /></button></>}</td></tr>)}</tbody></table></div>}
       </div>
-    </section>}
+      </section>
+      {health && <div className={`auth-admin-status ${health.admin_password_configured ? 'ready' : 'warning'}`}><div>{health.admin_password_configured ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}</div><span><strong>Local administrator password</strong>{health.admin_password_configured ? 'Configured separately from Active Directory.' : 'Not configured. Set UAT_LOCAL_ADMIN_PASSWORD before enabling Active Directory sign-in.'}</span></div>}
+    </>}
   </div>
 }

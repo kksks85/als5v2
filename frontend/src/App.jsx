@@ -281,6 +281,7 @@ const initialAssignmentGroups = [
    Login Page
    ────────────────────────────────────────── */
 function LoginPage({ onLogin }) {
+  const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [adminLogin, setAdminLogin] = useState(false)
@@ -292,9 +293,11 @@ function LoginPage({ onLogin }) {
     setLoginError('')
     setSubmitting(true)
     try {
-      const session = await authenticationApi.login({ username, password })
+      const session = adminLogin
+        ? await authenticationApi.login({ username, password })
+        : await authenticationApi.adEligibilityLogin(email)
       const sessionUser = session.user || {}
-      onLogin({ name: sessionUser.display_name || username, email: sessionUser.email || username, role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
+      onLogin({ name: sessionUser.display_name || (adminLogin ? username : email), email: sessionUser.email || (adminLogin ? username : email), role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
     } catch (error) {
       setLoginError(error.message || 'Sign-in failed.')
     } finally {
@@ -319,15 +322,15 @@ function LoginPage({ onLogin }) {
         <div className="login-card">
           <p className="login-eyebrow">UAT access</p>
           <h2>{adminLogin ? 'Administrator sign-in' : 'Active Directory sign-in'}</h2>
-          <p className="login-desc">{adminLogin ? 'Use the approved local UAT Administrator account.' : 'Sign in using your company Active Directory username and password.'}</p>
+          <p className="login-desc">{adminLogin ? 'Use the approved local administrator username and password.' : 'Enter your work email to continue with your Active Directory account.'}</p>
           <form onSubmit={handleSubmit}>
-            <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder={adminLogin ? 'admin' : 'AD username'} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label></div>
-            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || !username.trim() || !password}><LogIn size={17} /> {submitting ? 'Signing in...' : 'Sign in'}</button></div>
+            {adminLogin ? <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="admin" required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label></div> : <div className="login-field"><label>Work email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" required /></label></div>}
+            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || (adminLogin ? !username.trim() || !password : !email.trim())}><LogIn size={17} /> {submitting ? 'Signing in...' : adminLogin ? 'Sign in as administrator' : 'Continue with Active Directory'}</button></div>
           </form>
           {loginError && <p className="login-desc" role="alert">{loginError}</p>}
-          <button type="button" className="help-link" onClick={() => { setAdminLogin((value) => !value); setUsername(''); setPassword(''); setLoginError('') }}>{adminLogin ? 'Use Active Directory sign-in' : 'Administrator sign-in'}</button>
           <div className="login-footer"><Lock size={13} /> UAT authentication is enforced through Active Directory.</div>
         </div>
+        <button type="button" className="admin-login-trigger" onClick={() => { setAdminLogin((value) => !value); setEmail(''); setUsername(''); setPassword(''); setLoginError('') }}>{adminLogin ? 'Back to Active Directory' : 'Admin login'}</button>
       </div>
     </div>
   )
