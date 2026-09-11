@@ -1,0 +1,9 @@
+{
+	auto_https disable_redirects
+}
+
+trlayam.duckdns.org {
+	reverse_proxy 127.0.0.1:5175 {
+		header_up Host 127.0.0.1:5175
+	}
+}

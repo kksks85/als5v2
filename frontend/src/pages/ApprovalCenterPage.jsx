@@ -5,13 +5,6 @@ const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB'
 
 const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval', 'Material Replacement Approval']
 const APPROVAL_PRIORITIES = ['Critical', 'High', 'Normal', 'Low']
-const latestWorkNote = (incident) => {
-  const journalNote = [...(incident.auditLog || [])].reverse()
-    .flatMap((entry) => entry.changes || [])
-    .find((change) => change.field === 'Work notes' && String(change.next || '').trim())?.next
-  return journalNote || incident.workNotes || ''
-}
-
 const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocuments) => {
   const approvers = users.filter((user) => user.role === 'Manager' || user.role === 'Administrator')
   const delegates = users.filter((user) => user.role === 'Manager')
@@ -106,8 +99,7 @@ const incidentGroupApprovals = (incidents) => incidents.flatMap((incident) => {
     requestedOn: approval.requestedAt,
     dueBy: approval.dueBy || '',
     remarks: approval.status === 'Approved' ? `Approved by ${approval.approvedBy}.` : '',
-    resolutionDetails: incident.resolutionDetails || '',
-    latestWorkNote: latestWorkNote(incident),
+    resolutionNotes: approval.resolutionNotes || incident.resolutionDetails || '',
     incidentId: incident.id,
     groupApproval: true,
   }))
@@ -270,12 +262,8 @@ function ApprovalDetail({ approval, currentUser, onClose, onRequestDecision, onO
             </dl>
           </section>
           <section className="approval-detail-section approval-resolution-section">
-            <header><h2>Resolution details</h2><span>Read only</span></header>
-            <textarea aria-label="Resolution details" value={approval.resolutionDetails || ''} readOnly placeholder="No resolution notes have been recorded for this incident." />
-          </section>
-          <section className="approval-detail-section approval-resolution-section">
-            <header><h2>Latest work note</h2><span>Read only</span></header>
-            <textarea aria-label="Latest work note" value={approval.latestWorkNote || ''} readOnly placeholder="No work notes have been recorded for this incident." />
+            <header><h2>Resolution notes</h2><span>Read only</span></header>
+            <textarea aria-label="Resolution notes" value={approval.resolutionNotes || ''} readOnly placeholder="No resolution notes have been recorded for this incident." />
           </section>
           {approval.remarks && <section className="approval-detail-section approval-remarks-section"><header><h2>Remarks</h2></header><p className="approval-remarks">{approval.remarks}</p></section>}
         </main>

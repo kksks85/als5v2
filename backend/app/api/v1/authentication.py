@@ -7,7 +7,7 @@ kept separately so it cannot be confused with production authentication.
 
 import hmac
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -16,8 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuthenticationSettings, LocalAdminCredential, RoleMapping, UserSession
-from app.services.authentication import AuthenticationError, AuthorizationService, DirectoryProfile, SessionManager, audit, authenticate_ad_eligibility, authenticate_enterprise, issue_demo_session, local_admin_password_status, set_local_admin_password, settings_for, verify_local_admin_password
+from app.models import AuthenticationSettings, RoleMapping, UserRecord, UserSession
+from app.services.authentication import AuthenticationError, AuthorizationService, DEFAULT_USER_PASSWORD, DirectoryProfile, SessionManager, audit, authenticate_enterprise, auth_metadata, find_local_user, hash_password, issue_demo_session, local_profile, normalize_username, settings_for, verify_password
 
 router = APIRouter(prefix="/authentication", tags=["authentication"])
 
@@ -36,23 +36,23 @@ class LoginRequest(BaseModel):
         return value
 
 
-class AdEligibilityLoginRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-
-    @field_validator("email")
-    @classmethod
-    def normalized_email(cls, value: str) -> str:
-        value = value.strip().lower()
-        if "@" not in value or any(character in value for character in "\r\n\x00"):
-            raise ValueError("Email is invalid.")
-        return value
-
-
 class DemoLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=255)
     display_name: str = Field(min_length=1, max_length=255)
     email: str = Field(default="", max_length=320)
     password: str = Field(default="", max_length=1024, repr=False)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024, repr=False)
+    new_password: str = Field(min_length=8, max_length=1024, repr=False)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        if not any(character.isupper() for character in value) or not any(character.islower() for character in value) or not any(character.isdigit() for character in value):
+            raise ValueError("Password must contain uppercase, lowercase, and numeric characters.")
+        return value
 
 
 class RoleMappingInput(BaseModel):
@@ -62,7 +62,7 @@ class RoleMappingInput(BaseModel):
 
 
 class AuthenticationSettingsInput(BaseModel):
-    provider: str = Field(default="demo", pattern="^(demo|ldap_ad|rsa_ad|azure_ad|okta|ping|auth0)$")
+    provider: str = Field(default="rsa_ad", pattern="^(demo|rsa_ad|azure_ad|okta|ping|auth0)$")
     enabled: bool = False
     session_timeout_minutes: int = Field(default=60, ge=5, le=1440)
     lockout_threshold: int = Field(default=5, ge=1, le=20)
@@ -70,31 +70,26 @@ class AuthenticationSettingsInput(BaseModel):
     rate_limit_per_minute: int = Field(default=10, ge=1, le=120)
 
 
-class LocalAdminPasswordStatus(BaseModel):
-    configured: bool
-    expires_at: datetime | None
-    days_remaining: int | None
-    expired: bool
-    password_change_interval_days: int = 180
-
-
-class LocalAdminPasswordUpdate(BaseModel):
-    current_password: str = Field(min_length=1, max_length=1024, repr=False)
-    new_password: str = Field(min_length=8, max_length=1024, repr=False)
-
-
 def source_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def auth_response(profile: DirectoryProfile, roles: list[str], token: str, expires_at: datetime) -> dict:
-    return {"access_token": token, "token_type": "bearer", "expires_at": expires_at.isoformat(), "user": {"username": profile.username, "display_name": profile.display_name, "email": profile.email, "groups": profile.groups, "roles": roles}}
+def auth_response(profile: DirectoryProfile, roles: list[str], token: str, expires_at: datetime, must_change_password: bool = False) -> dict:
+    return {"access_token": token, "token_type": "bearer", "expires_at": expires_at.isoformat(), "must_change_password": must_change_password, "user": {"username": profile.username, "display_name": profile.display_name, "email": profile.email, "groups": profile.groups, "roles": roles}}
 
 
 def require_session(request: Request, database: Session = Depends(get_db)) -> dict:
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or request.cookies.get("als50_session", "")
     try:
         return SessionManager().verify(database, token)
+    except AuthenticationError as error:
+        raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
+
+
+def require_password_change_session(request: Request, database: Session = Depends(get_db)) -> dict:
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or request.cookies.get("als50_session", "")
+    try:
+        return SessionManager().verify(database, token, allow_password_change=True)
     except AuthenticationError as error:
         raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
 
@@ -114,29 +109,65 @@ def require_administrator(claims: dict = Depends(require_session)) -> None:
 @router.post("/login")
 def login(body: LoginRequest, request: Request, response: Response, database: Session = Depends(get_db)) -> dict:
     try:
-        profile, roles, token, expires_at = authenticate_enterprise(database, body.username, body.password, body.rsa_token, source_ip(request))
+        profile, roles, token, expires_at, must_change_password = authenticate_enterprise(database, body.username, body.password, body.rsa_token, source_ip(request))
     except AuthenticationError as error:
         raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
     max_age = int((expires_at - datetime.now(expires_at.tzinfo)).total_seconds())
     response.set_cookie("als50_session", token, httponly=True, secure=request.url.scheme == "https", samesite="strict", max_age=max_age, path="/")
     response.set_cookie("als50_csrf", __import__("secrets").token_urlsafe(32), httponly=False, secure=request.url.scheme == "https", samesite="strict", max_age=max_age, path="/")
-    return auth_response(profile, roles, token, expires_at)
+    return auth_response(profile, roles, token, expires_at, must_change_password)
 
 
-@router.post("/ad-eligibility-login")
-def ad_eligibility_login(body: AdEligibilityLoginRequest, request: Request, response: Response, database: Session = Depends(get_db)) -> dict:
-    identity_header = os.getenv("AD_TRUSTED_IDENTITY_HEADER", "X-Remote-User")
-    trusted_identity = request.headers.get(identity_header, "")
-    if not trusted_identity:
-        raise HTTPException(status_code=401, detail={"code": "AD_IDENTITY_REQUIRED", "message": "A trusted Active Directory identity is required."})
+@router.post("/change-password")
+def change_password(body: ChangePasswordRequest, request: Request, response: Response, claims: dict = Depends(require_password_change_session), _: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
+    user = find_local_user(database, claims["sub"])
+    if not user:
+        raise HTTPException(status_code=404, detail={"code": "AUTH_USER_NOT_FOUND", "message": "User was not found."})
+    metadata = auth_metadata(user.payload)
+    if not verify_password(body.current_password, metadata.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail={"code": "AUTH_INVALID_CREDENTIALS", "message": "Current password is invalid."})
+    if normalize_username(body.current_password) == normalize_username(body.new_password):
+        raise HTTPException(status_code=422, detail={"code": "AUTH_VALIDATION_ERROR", "message": "New password must differ from the current password."})
+    next_payload = dict(user.payload)
+    next_metadata = dict(metadata)
+    next_metadata.update({"password_hash": hash_password(body.new_password), "must_change_password": False, "password_changed_at": datetime.now(UTC).isoformat()})
+    next_payload["_authentication"] = next_metadata
+    user.payload = next_payload
+    session = database.scalar(select(UserSession).where(UserSession.session_id == claims["sid"]))
+    if session:
+        session.revoked_at = datetime.now(session.expires_at.tzinfo)
+    database.commit()
+    response.delete_cookie("als50_session", path="/")
+    response.delete_cookie("als50_csrf", path="/")
+    return {"status": "ok", "message": "Password changed. Please sign in again."}
+
+
+@router.post("/refresh")
+def refresh_session(request: Request, response: Response, claims: dict = Depends(require_session), _: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or request.cookies.get("als50_session", "")
     try:
-        profile, roles, token, expires_at = authenticate_ad_eligibility(database, body.email, trusted_identity, source_ip(request))
+        refreshed_token, expires_at = SessionManager().renew(database, token)
     except AuthenticationError as error:
         raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
     max_age = int((expires_at - datetime.now(expires_at.tzinfo)).total_seconds())
-    response.set_cookie("als50_session", token, httponly=True, secure=request.url.scheme == "https", samesite="strict", max_age=max_age, path="/")
+    response.set_cookie("als50_session", refreshed_token, httponly=True, secure=request.url.scheme == "https", samesite="strict", max_age=max_age, path="/")
     response.set_cookie("als50_csrf", __import__("secrets").token_urlsafe(32), httponly=False, secure=request.url.scheme == "https", samesite="strict", max_age=max_age, path="/")
-    return auth_response(profile, roles, token, expires_at)
+    return {"access_token": refreshed_token, "expires_at": expires_at.isoformat(), "must_change_password": bool(claims.get("must_change_password"))}
+
+
+@router.post("/users/{username}/reset-password")
+def reset_user_password(username: str, request: Request, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
+    user = find_local_user(database, username)
+    if not user:
+        raise HTTPException(status_code=404, detail={"code": "AUTH_USER_NOT_FOUND", "message": "User was not found."})
+    metadata = dict(auth_metadata(user.payload))
+    metadata.update({"password_hash": hash_password(DEFAULT_USER_PASSWORD), "must_change_password": True, "password_changed_at": None})
+    next_payload = dict(user.payload)
+    next_payload["_authentication"] = metadata
+    user.payload = next_payload
+    database.commit()
+    audit(database, event_type="password_reset", outcome="success", username=username, provider="local", source_ip=source_ip(request), correlation_id="administrator-password-reset")
+    return {"status": "ok", "username": username, "temporary_password": DEFAULT_USER_PASSWORD, "must_change_password": True}
 
 
 @router.post("/demo-login")
@@ -156,7 +187,7 @@ def demo_login(body: DemoLoginRequest, request: Request, database: Session = Dep
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response, claims: dict = Depends(require_session), _: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
+def logout(request: Request, response: Response, claims: dict = Depends(require_password_change_session), _: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
     session = database.scalar(select(UserSession).where(UserSession.session_id == claims["sid"]))
     if session:
         session.revoked_at = datetime.now(session.expires_at.tzinfo)
@@ -174,49 +205,8 @@ def current_session(claims: dict = Depends(require_session)) -> dict:
 
 @router.get("/health")
 def authentication_health(database: Session = Depends(get_db)) -> dict:
-    from app.services.authentication import validate_admin_configuration
     settings = settings_for(database)
-    auth_secret_configured = bool(os.getenv("AUTH_JWT_SECRET"))
-    ldap_configured = all(os.getenv(variable) for variable in ("LDAP_SERVER_URI", "LDAP_BASE_DN", "LDAP_BIND_DN", "LDAP_BIND_PASSWORD", "LDAP_USER_DOMAIN"))
-    provider_configured = settings.provider == "demo" or (settings.provider in {"ldap_ad", "rsa_ad"} and auth_secret_configured and ldap_configured)
-    admin_config = validate_admin_configuration(database)
-
-    return {
-        "status": "ok",
-        "provider": str(settings.provider) if settings.provider else "demo",
-        "enforced": bool(settings.enabled),
-        "live_provider_configured": provider_configured,
-        "auth_secret_configured": auth_secret_configured,
-        "ldap_configured": ldap_configured,
-        "admin_password_configured": admin_config["admin_password_set"],
-        "admin_authentication_warning": "Admin password not configured!" if (settings.enabled and not admin_config["admin_password_set"]) else None,
-    }
-
-
-@router.get("/local-admin-password", response_model=LocalAdminPasswordStatus)
-def get_local_admin_password_status(_: None = Depends(require_administrator), database: Session = Depends(get_db)) -> dict:
-    return {**local_admin_password_status(database), "password_change_interval_days": 180}
-
-
-@router.put("/local-admin-password", response_model=LocalAdminPasswordStatus)
-def update_local_admin_password(body: LocalAdminPasswordUpdate, request: Request, claims: dict = Depends(require_session), _: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict:
-    try:
-        AuthorizationService().require_any_role(claims, {"Administrator"})
-    except AuthenticationError as error:
-        raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
-    if hmac.compare_digest(body.current_password, body.new_password):
-        raise HTTPException(status_code=400, detail={"code": "ADMIN_PASSWORD_REUSED", "message": "Choose a new administrator password."})
-    credential = database.get(LocalAdminCredential, 1)
-    bootstrap_password = os.getenv("UAT_LOCAL_ADMIN_PASSWORD", "")
-    current_password_valid = verify_local_admin_password(body.current_password, credential.password_hash) if credential else bool(bootstrap_password) and hmac.compare_digest(body.current_password, bootstrap_password)
-    if not current_password_valid:
-        raise HTTPException(status_code=401, detail={"code": "AUTH_INVALID_CREDENTIALS", "message": "Current administrator password is invalid."})
-    try:
-        set_local_admin_password(database, body.new_password)
-        audit(database, event_type="admin_password_changed", outcome="success", username=claims["sub"], provider="local_admin", source_ip=source_ip(request), correlation_id=__import__("secrets").token_hex(16))
-    except AuthenticationError as error:
-        raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
-    return {**local_admin_password_status(database), "password_change_interval_days": 180}
+    return {"status": "ok", "provider": settings.provider, "enforced": settings.enabled, "live_provider_configured": bool(__import__("os").getenv("AUTH_JWT_SECRET") and __import__("os").getenv("LDAP_SERVER_URI"))}
 
 
 @router.get("/settings")

@@ -4,7 +4,7 @@ import { AttachmentSection } from './IncidentsPage'
 
 const blankClaim = () => ({
   customer: '', contactId: '', requester: '', otherContact: false, otherName: '', otherPhone: '', otherEmail: '',
-  customerClaimNumber: '', claimRaisedOn: new Date().toISOString().slice(0, 10), claimRaisedFor: '', relatedIncidentIds: [],
+  customerClaimNumber: '', claimRaisedOn: new Date().toISOString().slice(0, 10), claimRaisedFor: '', relatedIncidentIds: [], noKnownRelatedIncident: false,
   correspondenceType: '', mailReferenceNumber: '', mailDate: '', remarks: '', status: 'Open', attachments: [],
 })
 const progressForStatus = (status) => status === 'Settled' ? 'Resolved' : status === 'Pending' ? 'Pending' : 'Raised'
@@ -20,10 +20,13 @@ export default function WarrantyQualityClaimsPage({ claims, setClaims, customers
   const [customerFilter, setCustomerFilter] = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
   const [dateFilter, setDateFilter] = useState('')
-  const [pendingIncidentId, setPendingIncidentId] = useState('')
+  const [incidentReferenceSearch, setIncidentReferenceSearch] = useState('')
   const selectedCustomer = customers.find((customer) => customer.name === form.customer)
   const contacts = selectedCustomer?.contacts || []
-  const matchingIncidents = incidents.filter((incident) => incident.customer === form.customer && incident.category === form.claimRaisedFor)
+  const relatedIncident = incidents.find((incident) => incident.id === form.relatedIncidentIds[0])
+  const matchingIncidents = incidentReferenceSearch.trim()
+    ? incidents.filter((incident) => [incident.id, incident.title].some((value) => String(value || '').toLowerCase().includes(incidentReferenceSearch.trim().toLowerCase()))).slice(0, 8)
+    : []
   const visibleClaims = useMemo(() => claims.filter((claim) => {
     const related = claim.relatedIncidentIds || [claim.relatedIncidentId]
     const matchesSearch = !search || [claim.id, claim.customerClaimNumber, claim.customer, ...related].some((value) => String(value || '').toLowerCase().includes(search.toLowerCase()))
@@ -32,23 +35,22 @@ export default function WarrantyQualityClaimsPage({ claims, setClaims, customers
   const update = (field, value) => setForm((current) => ({ ...current, [field]: value }))
   const selectCustomer = (customer) => {
     const firstContact = customers.find((entry) => entry.name === customer)?.contacts?.[0]
-    setForm((current) => ({ ...current, customer, contactId: firstContact?.id ? String(firstContact.id) : '', requester: firstContact?.name || '', claimRaisedFor: '', relatedIncidentIds: [] }))
-    setPendingIncidentId('')
+    setForm((current) => ({ ...current, customer, contactId: firstContact?.id ? String(firstContact.id) : '', requester: firstContact?.name || '', claimRaisedFor: '', relatedIncidentIds: [], noKnownRelatedIncident: false }))
+    setIncidentReferenceSearch('')
   }
   const selectContact = (contactId) => {
     const contact = contacts.find((entry) => String(entry.id) === contactId)
     setForm((current) => ({ ...current, contactId, requester: contact?.name || '' }))
   }
-  const addRelatedIncident = () => {
-    if (!pendingIncidentId) return
-    setForm((current) => ({ ...current, relatedIncidentIds: current.relatedIncidentIds.includes(pendingIncidentId) ? current.relatedIncidentIds : [...current.relatedIncidentIds, pendingIncidentId] }))
-    setPendingIncidentId('')
+  const selectRelatedIncident = (incidentId) => {
+    setForm((current) => ({ ...current, relatedIncidentIds: [incidentId], noKnownRelatedIncident: false }))
+    setIncidentReferenceSearch('')
   }
   const submit = (event) => {
     event.preventDefault()
     const required = ['customer', 'requester', 'customerClaimNumber', 'claimRaisedOn', 'claimRaisedFor', 'status']
     const nextErrors = Object.fromEntries(required.filter((field) => !String(form[field] || '').trim()).map((field) => [field, 'Required']))
-    if (!form.relatedIncidentIds.length) nextErrors.relatedIncidentIds = 'Select at least one incident'
+    if (!form.noKnownRelatedIncident && !form.relatedIncidentIds.length) nextErrors.relatedIncidentIds = 'Select at least one incident or confirm that no known incident is attached'
     if (!form.otherContact && !form.contactId) nextErrors.contactId = 'Required'
     if (form.otherContact) ['otherName', 'otherPhone', 'otherEmail'].forEach((field) => { if (!String(form[field] || '').trim()) nextErrors[field] = 'Required' })
     setErrors(nextErrors)
@@ -66,7 +68,7 @@ export default function WarrantyQualityClaimsPage({ claims, setClaims, customers
     <section className="incident-form-sheet">
       <section className="incident-detail-section"><h2>Customer & contact</h2><div className="incident-form-grid"><Field label="Customer name" error={errors.customer}><Select value={form.customer} onChange={selectCustomer} options={customers.map((customer) => customer.name)} placeholder="Select customer" /></Field><Field label="Customer contact" error={errors.contactId}><Select value={form.contactId} onChange={selectContact} options={contacts.map((contact) => `${contact.id}|${contact.name}${contact.phone ? ` | ${contact.phone}` : ''}`)} placeholder={form.customer ? 'Select customer contact' : 'Select customer first'} disabled={!form.customer || form.otherContact} /></Field><Field label="Requester" error={errors.requester}><input value={form.requester} readOnly={!form.otherContact} onChange={(event) => update('requester', event.target.value)} /></Field><label className="claim-other-contact"><input type="checkbox" checked={form.otherContact} onChange={(event) => update('otherContact', event.target.checked)} /><span><strong>Other contact</strong><small>Enter a contact not available in the customer master.</small></span></label></div></section>
       {form.otherContact && <section className="incident-detail-section"><h2>Other contact</h2><div className="incident-form-grid"><Field label="Name" error={errors.otherName}><input value={form.otherName} onChange={(event) => { update('otherName', event.target.value); update('requester', event.target.value) }} /></Field><Field label="Phone" error={errors.otherPhone}><input type="tel" inputMode="numeric" maxLength={10} value={form.otherPhone} onChange={(event) => update('otherPhone', event.target.value.replace(/\D/g, '').slice(0, 10))} /></Field><Field label="Email" error={errors.otherEmail}><input type="email" value={form.otherEmail} onChange={(event) => update('otherEmail', event.target.value)} /></Field></div></section>}
-      <section className="incident-detail-section"><h2>Claim details</h2><div className="incident-form-grid"><Field label="Customer claim number" error={errors.customerClaimNumber}><input value={form.customerClaimNumber} onChange={(event) => update('customerClaimNumber', event.target.value)} /></Field><Field label="Claim raised on" error={errors.claimRaisedOn}><input type="date" value={form.claimRaisedOn} onChange={(event) => update('claimRaisedOn', event.target.value)} /></Field><Field label="Claim raised for" error={errors.claimRaisedFor}><Select value={form.claimRaisedFor} onChange={(value) => { update('claimRaisedFor', value); update('relatedIncidentIds', []); setPendingIncidentId('') }} options={productCategories} placeholder="Select product category" /></Field><Field label="Status" error={errors.status}><Select value={form.status} onChange={(value) => update('status', value)} options={['Open', 'Pending', 'Settled']} placeholder="Select status" /></Field><Field label="Related incidents" error={errors.relatedIncidentIds}><div className="claim-related-incident"><select value={pendingIncidentId} disabled={!form.customer || !form.claimRaisedFor} onChange={(event) => setPendingIncidentId(event.target.value)}><option value="">-- Select incident number - summary --</option>{matchingIncidents.map((incident) => <option key={incident.id} value={incident.id}>{incident.id} - {incident.title}</option>)}</select><button type="button" className="icon-button" title="Add related incident" disabled={!pendingIncidentId} onClick={addRelatedIncident}><Plus size={15} /></button></div>{form.relatedIncidentIds.length > 0 && <div className="claim-related-list">{form.relatedIncidentIds.map((incidentId) => <span key={incidentId}>{incidentId}<button type="button" onClick={() => update('relatedIncidentIds', form.relatedIncidentIds.filter((entry) => entry !== incidentId))}>x</button></span>)}</div>}</Field></div><Field label="Claim description / remarks"><textarea value={form.remarks} onChange={(event) => update('remarks', event.target.value)} rows="4" /></Field></section>
+      <section className="incident-detail-section"><h2>Claim details</h2><div className="incident-form-grid"><Field label="Customer claim number" error={errors.customerClaimNumber}><input value={form.customerClaimNumber} onChange={(event) => update('customerClaimNumber', event.target.value)} /></Field><Field label="Claim raised on" error={errors.claimRaisedOn}><input type="date" value={form.claimRaisedOn} onChange={(event) => update('claimRaisedOn', event.target.value)} /></Field><Field label="Claim raised for" error={errors.claimRaisedFor}><Select value={form.claimRaisedFor} onChange={(value) => { update('claimRaisedFor', value); update('relatedIncidentIds', []); setIncidentReferenceSearch('') }} options={productCategories} placeholder="Select product category" /></Field><Field label="Status" error={errors.status}><Select value={form.status} onChange={(value) => update('status', value)} options={['Open', 'Pending', 'Settled']} placeholder="Select status" /></Field><Field label="Related incident" error={errors.relatedIncidentIds}><div className="claim-incident-reference"><input value={relatedIncident ? `${relatedIncident.id} - ${relatedIncident.title}` : incidentReferenceSearch} disabled={form.noKnownRelatedIncident} onChange={(event) => { update('relatedIncidentIds', []); setIncidentReferenceSearch(event.target.value) }} placeholder="Search incident number" />{matchingIncidents.length > 0 && <div className="claim-incident-suggestions">{matchingIncidents.map((incident) => <button type="button" key={incident.id} onClick={() => selectRelatedIncident(incident.id)}><strong>{incident.id}</strong><span>{incident.title || 'No short description'}</span></button>)}</div>}</div><label className="claim-other-contact"><input type="checkbox" checked={form.noKnownRelatedIncident} onChange={(event) => { update('noKnownRelatedIncident', event.target.checked); if (event.target.checked) { update('relatedIncidentIds', []); setIncidentReferenceSearch('') } }} /><span><strong>No Related Incident</strong></span></label></Field></div><Field label="Claim description / remarks"><textarea value={form.remarks} onChange={(event) => update('remarks', event.target.value)} rows="4" /></Field></section>
       <section className="incident-detail-section"><h2>Correspondence</h2><div className="incident-form-grid"><Field label="Correspondence type"><Select value={form.correspondenceType} onChange={(value) => update('correspondenceType', value)} options={['Phone Call', 'Whatsapp', 'Email', 'Letter']} placeholder="Select correspondence type" /></Field><Field label="Mail reference number"><input value={form.mailReferenceNumber} onChange={(event) => update('mailReferenceNumber', event.target.value)} /></Field><Field label="Mail date"><input type="date" value={form.mailDate} onChange={(event) => update('mailDate', event.target.value)} /></Field></div><AttachmentSection attachments={form.attachments} onChange={(attachments) => update('attachments', attachments)} /></section>
     </section>
     <footer className="incident-form-footer"><button type="button" className="incident-cancel-button" onClick={() => setShowForm(false)}>Cancel</button><button type="submit" className="incident-submit-button">Create claim</button></footer>

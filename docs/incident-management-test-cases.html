@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incident Management Test Cases</title>
+  <style>
+    :root { color-scheme: light; --ink:#172b3a; --muted:#607487; --line:#d9e2ea; --paper:#fff; --canvas:#f3f6f8; --blue:#1769aa; --blue-soft:#e9f3fb; --green:#157347; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--canvas); color:var(--ink); font:14px/1.6 Segoe UI, system-ui, sans-serif; }
+    .page { max-width:1180px; margin:0 auto; padding:32px 22px 72px; }
+    header { background:linear-gradient(135deg,#123b62,#1e78ae); color:#fff; border-radius:14px; padding:34px 38px; box-shadow:0 8px 24px #173d5824; }
+    header h1 { margin:0 0 6px; font-size:30px; }
+    header p { margin:0; color:#dcecf7; }
+    .toolbar { position:sticky; top:0; z-index:2; display:flex; gap:12px; align-items:center; margin:20px 0; padding:12px; background:#f3f6f8ee; backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
+    input { flex:1; min-width:180px; border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#fff; font:inherit; }
+    button { border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); padding:9px 12px; cursor:pointer; font:inherit; }
+    button:hover { border-color:var(--blue); color:var(--blue); }
+    main > h2 { margin:28px 0 10px; padding-top:10px; border-top:1px solid var(--line); font-size:22px; }
+    .intro { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:20px 24px; margin-bottom:14px; }
+    .case { background:var(--paper); border:1px solid var(--line); border-radius:10px; margin:10px 0; overflow:hidden; box-shadow:0 2px 8px #18384d08; }
+    .case summary { display:flex; align-items:center; gap:12px; padding:15px 18px; cursor:pointer; list-style:none; font-weight:700; }
+    .case summary::-webkit-details-marker { display:none; }
+    .case summary::before { content:'+'; color:var(--blue); font-size:20px; width:18px; }
+    .case[open] summary::before { content:'-'; }
+    .case-id { color:var(--blue); font-family:Consolas, monospace; font-size:12px; white-space:nowrap; }
+    .case-body { border-top:1px solid var(--line); padding:18px 24px 22px 48px; }
+    .case-body h4 { margin:15px 0 5px; color:var(--blue); font-size:13px; text-transform:uppercase; letter-spacing:.05em; }
+    .case-body h4:first-child { margin-top:0; }
+    .case-body p { margin:5px 0; }
+    .case-body ol, .case-body ul { margin:5px 0 12px; padding-left:24px; }
+    .type { display:inline-block; padding:2px 8px; border-radius:99px; background:var(--blue-soft); color:var(--blue); font-size:11px; font-weight:700; }
+    .empty { color:var(--muted); padding:25px; text-align:center; }
+    .error { color:#a61b1b; background:#fff0f0; padding:16px; border-radius:8px; }
+    .print-button { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .print-button:hover { background:#125789; color:#fff; }
+    @media print {
+      @page { size:A4; margin:14mm; }
+      body { background:#fff; color:#111; font-size:10pt; }
+      .page { max-width:none; padding:0; }
+      header { background:#fff; color:#111; border:0; box-shadow:none; padding:0 0 16px; }
+      header p { color:#333; }
+      .toolbar { display:none; }
+      main > h2 { break-before:page; page-break-before:always; font-size:17pt; }
+      main > h2:first-child { break-before:auto; page-break-before:auto; }
+      .case { break-inside:avoid; page-break-inside:avoid; box-shadow:none; margin:7px 0; }
+      .case summary { padding:9px 12px; }
+      .case-body { padding:12px 18px 14px 34px; }
+      .case[open] summary::before { content:''; }
+      .type { border:1px solid #999; background:#fff; color:#111; }
+    }
+    @media (max-width:700px) { .page { padding:18px 12px 48px; } header { padding:25px 22px; } header h1 { font-size:24px; } .toolbar { flex-wrap:wrap; } .case-body { padding:16px 18px 20px 28px; } .case summary { align-items:flex-start; flex-wrap:wrap; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header><h1>Incident Management Test Cases</h1><p>Readable QA view with collapsible scenarios, filters, and positive/negative coverage.</p></header>
+    <div class="toolbar"><input id="search" type="search" placeholder="Search test cases, workflow, approval, attachment..." aria-label="Search test cases"><button id="expand">Expand all</button><button id="collapse">Collapse all</button><button class="print-button" id="print">Print / Save PDF</button></div>
+    <main id="content"><p>Loading test cases...</p></main>
+  </div>
+  <script>
+    const content = document.querySelector('#content')
+    const search = document.querySelector('#search')
+    let cases = []
+    const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]))
+    const inline = (value) => escapeHtml(value).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>')
+    const renderBlock = (lines) => {
+      const output = []
+      let list = null
+      const closeList = () => { if (list) { output.push(`<${list.tag}>${list.items.join('')}</${list.tag}>`); list = null } }
+      lines.forEach((line) => {
+        if (/^\d+\. /.test(line)) { if (!list || list.tag !== 'ol') { closeList(); list = { tag:'ol', items:[] } } list.items.push(`<li>${inline(line.replace(/^\d+\. /,''))}</li>`); return }
+        if (/^- /.test(line)) { if (!list || list.tag !== 'ul') { closeList(); list = { tag:'ul', items:[] } } list.items.push(`<li>${inline(line.slice(2))}</li>`); return }
+        closeList()
+        if (!line.trim()) return
+        output.push(`<p>${inline(line)}</p>`)
+      })
+      closeList()
+      return output.join('')
+    }
+    const renderCase = (testCase) => {
+      const type = testCase.lines.find((line) => line.startsWith('**Type:**'))?.replace('**Type:**','').trim() || 'Scenario'
+      const body = testCase.lines.filter((line) => !line.startsWith('**Type:**'))
+      const sections = []
+      let current = null
+      body.forEach((line) => {
+        const heading = line.match(/^\*\*(Preconditions|Steps|Expected):\*\*$/)
+        if (heading) { current = { title: heading[1], lines:[] }; sections.push(current); return }
+        if (current) current.lines.push(line)
+      })
+      const rendered = sections.map((section) => `<h4>${section.title}</h4>${renderBlock(section.lines)}`).join('')
+      return `<details class="case" data-search="${escapeHtml((testCase.id + ' ' + testCase.title + ' ' + type + ' ' + body.join(' ')).toLowerCase())}"><summary><span class="case-id">${testCase.id}</span><span>${inline(testCase.title)}</span><span class="type">${inline(type)}</span></summary><div class="case-body">${rendered}</div></details>`
+    }
+    const render = () => {
+      const term = search.value.toLowerCase().trim()
+      document.querySelectorAll('.case').forEach((element) => { element.style.display = !term || element.dataset.search.includes(term) ? '' : 'none' })
+    }
+    fetch('incident-management-test-cases.md').then((response) => response.text()).then((markdown) => {
+      const lines = markdown.split(/\r?\n/)
+      let section = null
+      let current = null
+      lines.forEach((line) => {
+        const sectionMatch = line.match(/^## (.+)$/)
+        const caseMatch = line.match(/^### (IM-[A-Z]+-\d+) (.+)$/)
+        if (sectionMatch) { section = { title: sectionMatch[1], intro:[], cases:[] }; cases.push(section); current = null; return }
+        if (caseMatch) { current = { id:caseMatch[1], title:caseMatch[2], lines:[] }; if (section) section.cases.push(current); return }
+        if (current) current.lines.push(line)
+        else if (section) section.intro.push(line)
+      })
+      content.innerHTML = cases.map((section) => `<h2>${inline(section.title)}</h2>${section.intro.length ? `<div class="intro">${renderBlock(section.intro)}</div>` : ''}${section.cases.map(renderCase).join('')}`).join('')
+      search.addEventListener('input', render)
+    }).catch(() => { content.innerHTML = '<p class="error">Unable to load the test-case document. Open this page through the local documentation server.</p>' })
+    document.querySelector('#expand').onclick = () => document.querySelectorAll('.case').forEach((item) => { item.open = true })
+    document.querySelector('#collapse').onclick = () => document.querySelectorAll('.case').forEach((item) => { item.open = false })
+    document.querySelector('#print').onclick = () => { document.querySelectorAll('.case').forEach((item) => { item.open = true }); window.print() }
+    window.addEventListener('beforeprint', () => document.querySelectorAll('.case').forEach((item) => { item.open = true }))
+  </script>
+</body>
+</html>

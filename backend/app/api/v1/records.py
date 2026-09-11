@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, QueryRecord, RepairExecutionRecord, SubcontractRecord, SystemSettingsRecord, UserRecord
-# Fix #2 & #3: Import authentication dependencies
-from app.api.v1.authentication import require_session, require_csrf
+from app.services.authentication import AUTH_PAYLOAD_KEY, provision_user_credentials, public_user_payload
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -69,7 +68,6 @@ PRODUCT_MASTER_RESOURCES = {
     "warhead_sam_products",
     "tools_products",
     "mrls_products",
-    "damaged_expired_components",
     "sme_ste_products",
     "gse_products",
     "warranty_quality_claims",
@@ -104,32 +102,21 @@ def prune_expired_email_logs(database: Session) -> None:
 
 
 @router.get("/{resource}")
-def list_records(
-    resource: str, 
-    database: Session = Depends(get_db),
-    claims: dict = Depends(require_session)  # Fix #2: Add authentication
-) -> dict[str, list[dict[str, Any]]]:
+def list_records(resource: str, database: Session = Depends(get_db)) -> dict[str, list[dict[str, Any]]]:
     validate_resource(resource)
     if resource == "email_logs":
         prune_expired_email_logs(database)
         database.commit()
     if resource in PRODUCT_MASTER_RESOURCES:
         records = database.scalars(select(ProductMasterRecord).where(ProductMasterRecord.resource == resource).order_by(ProductMasterRecord.record_id)).all()
-        return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
+        return {"items": [{"record_id": record.record_id, "payload": public_user_payload(record.payload) if resource == "users" else record.payload} for record in records]}
     model = RESOURCE_MODELS[resource]
     records = database.scalars(select(model).order_by(model.record_id)).all()
-    return {"items": [{"record_id": record.record_id, "payload": record.payload} for record in records]}
+    return {"items": [{"record_id": record.record_id, "payload": public_user_payload(record.payload) if resource == "users" else record.payload} for record in records]}
 
 
 @router.put("/{resource}/{record_id}")
-def upsert_record(
-    resource: str, 
-    record_id: str, 
-    record: RecordInput, 
-    database: Session = Depends(get_db),
-    claims: dict = Depends(require_session),  # Fix #2: Add authentication
-    _: None = Depends(require_csrf)  # Fix #3: Add CSRF protection
-) -> dict[str, str]:
+def upsert_record(resource: str, record_id: str, record: RecordInput, database: Session = Depends(get_db)) -> dict[str, str]:
     validate_resource(resource)
     if record.record_id != record_id:
         raise HTTPException(status_code=422, detail="Record identifier does not match the request path.")
@@ -139,13 +126,7 @@ def upsert_record(
 
 
 @router.post("/{resource}/bulk-upsert")
-def bulk_upsert_records(
-    resource: str, 
-    body: BulkRecordsInput, 
-    database: Session = Depends(get_db),
-    claims: dict = Depends(require_session),  # Fix #2: Add authentication
-    _: None = Depends(require_csrf)  # Fix #3: Add CSRF protection
-) -> dict[str, int]:
+def bulk_upsert_records(resource: str, body: BulkRecordsInput, database: Session = Depends(get_db)) -> dict[str, int]:
     validate_resource(resource)
     write_records(resource, body.records, database)
     database.commit()
@@ -153,13 +134,7 @@ def bulk_upsert_records(
 
 
 @router.put("/{resource}")
-def replace_records(
-    resource: str, 
-    body: BulkRecordsInput, 
-    database: Session = Depends(get_db),
-    claims: dict = Depends(require_session),  # Fix #2: Add authentication
-    _: None = Depends(require_csrf)  # Fix #3: Add CSRF protection
-) -> dict[str, int]:
+def replace_records(resource: str, body: BulkRecordsInput, database: Session = Depends(get_db)) -> dict[str, int]:
     """Synchronize a complete client collection, including removals, atomically."""
     validate_resource(resource)
     if resource in PRODUCT_MASTER_RESOURCES:
@@ -172,13 +147,7 @@ def replace_records(
 
 
 @router.delete("/{resource}/{record_id}")
-def delete_record(
-    resource: str, 
-    record_id: str, 
-    database: Session = Depends(get_db),
-    claims: dict = Depends(require_session),  # Fix #2: Add authentication
-    _: None = Depends(require_csrf)  # Fix #3: Add CSRF protection
-) -> dict[str, str]:
+def delete_record(resource: str, record_id: str, database: Session = Depends(get_db)) -> dict[str, str]:
     validate_resource(resource)
     if resource in PRODUCT_MASTER_RESOURCES:
         database.execute(delete(ProductMasterRecord).where(ProductMasterRecord.resource == resource, ProductMasterRecord.record_id == record_id))
@@ -229,6 +198,15 @@ def write_records(resource: str, records: list[RecordInput], database: Session) 
     for record in records:
         payload = normalize_payload(record.payload)
         target = existing.get(record.record_id)
+        if resource == "users":
+            if target:
+                existing_authentication = target.payload.get(AUTH_PAYLOAD_KEY)
+                payload = dict(payload)
+                if existing_authentication:
+                    payload[AUTH_PAYLOAD_KEY] = existing_authentication
+            else:
+                username = str(payload.get("username") or payload.get("email") or record.record_id).strip()
+                payload = provision_user_credentials(payload, username)
         if target:
             target.payload = payload
             target.updated_at = now

@@ -40,6 +40,24 @@ docker compose up --build -d
 
 Open `http://localhost:5173`. The API runs only on the Docker network and is proxied by the web container under `/api`. PostgreSQL has no host port mapping.
 
+### Client-device camera access on-premises
+
+The Capture image action uses the browser camera on the user's laptop, tablet, or phone. It does not require a camera on the application server. Browsers permit this only from a secure origin: `https://` in an on-premises deployment (or `http://localhost` for local development). An `http://<server-name>` or `http://<IP-address>` URL is blocked by the browser before the application can request the device camera.
+
+Use an organization-issued certificate for the on-premises DNS name, set the certificate paths in `.env`, and start Compose with the HTTPS override:
+
+```dotenv
+TLS_CERT_PATH=C:/als50/tls/als50.crt
+TLS_KEY_PATH=C:/als50/tls/als50.key
+APP_HTTPS_PORT=443
+```
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.https.yml up --build -d
+```
+
+Open the application as `https://<approved-on-premises-DNS-name>/`, accept no certificate warnings, and allow Camera permission when prompted. The certificate must be trusted by the client MacBook/device; a self-signed or untrusted certificate will not provide reliable camera access. If the organization already terminates TLS on a load balancer or reverse proxy, configure that gateway with the same trusted certificate and publish the application through its HTTPS URL instead.
+
 The API runs `alembic upgrade head` and initializes secret-handling notices before it starts. On the first connected application session, the dashboard migrates its current Customers, Contracts, Product Master, Incidents, Knowledge documents, Users, and Assignment Groups to their corresponding PostgreSQL tables. Thereafter it synchronizes edits and deletions to PostgreSQL.
 
 ## Serialized component lifecycle

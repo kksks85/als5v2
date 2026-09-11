@@ -97,9 +97,45 @@ export default function AssignmentGroupsPage({ groups, setGroups, users, onGroup
   }
 
   const exportCsv = () => {
-    const exportColumns = columns.filter(({ key }) => visibleColumns.includes(key))
-    const data = [exportColumns.map(({ label }) => csvValue(label))]
-    filteredGroups.forEach((group) => data.push(exportColumns.map(({ key }) => csvValue(key === 'status' ? (group.active ? 'Active' : 'Inactive') : group[key]))))
+    const exportColumns = [
+      ['Group ID', 'id'],
+      ['Group name', 'name'],
+      ['Description', 'description'],
+      ['Manager', 'manager'],
+      ['Member count', 'members'],
+      ['Escalates to', 'escalatesTo'],
+      ['Created', 'created'],
+      ['Updated', 'updated'],
+      ['Status', 'status'],
+      ['Member user ID', 'memberId'],
+      ['Member name', 'memberName'],
+      ['Member username', 'memberUsername'],
+      ['Member email', 'memberEmail'],
+      ['Member employee ID', 'memberEmployeeId'],
+      ['Member job title', 'memberJobTitle'],
+      ['Member role', 'memberRole'],
+      ['Member status', 'memberStatus'],
+    ]
+    const data = [exportColumns.map(([label]) => csvValue(label))]
+    filteredGroups.forEach((group) => {
+      const members = users.filter((user) => (group.memberIds || []).some((memberId) => String(memberId) === String(user.id)))
+      const rows = members.length ? members : [null]
+      rows.forEach((member) => {
+        const values = {
+          ...group,
+          status: group.active ? 'Active' : 'Inactive',
+          memberId: member?.id,
+          memberName: member?.name,
+          memberUsername: member?.username,
+          memberEmail: member?.email,
+          memberEmployeeId: member?.employeeId,
+          memberJobTitle: member?.jobTitle,
+          memberRole: member?.role,
+          memberStatus: member?.status,
+        }
+        data.push(exportColumns.map(([, key]) => csvValue(values[key])))
+      })
+    })
     const url = URL.createObjectURL(new Blob([data.map((row) => row.join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' }))
     const anchor = document.createElement('a')
     anchor.href = url
@@ -125,7 +161,7 @@ export default function AssignmentGroupsPage({ groups, setGroups, users, onGroup
         <div className="customer-list-title"><h1>Assignment groups</h1></div>
         <div className="user-list-actions">
           <button className="compact-button secondary" onClick={() => setShowColumns((open) => !open)} aria-expanded={showColumns}><Settings2 size={15} /> Columns</button>
-          <button className="compact-button secondary" onClick={exportCsv} disabled={!activeColumns.length || !filteredGroups.length}><Download size={15} /> Export</button>
+          <button className="compact-button secondary" onClick={exportCsv} disabled={!filteredGroups.length}><Download size={15} /> Extract data</button>
           <button className="compact-button primary" onClick={openCreateForm}><Plus size={15} /> Add group</button>
         </div>
         {showColumns && (

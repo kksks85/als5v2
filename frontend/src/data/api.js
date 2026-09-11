@@ -1,41 +1,24 @@
 const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/v1'
 let accessToken = ''
 
-// Fix #8: Enforce HTTPS in production
-function ensureSecureConnection() {
-  const localHostnames = new Set(['localhost', '127.0.0.1', '[::1]'])
-  if (import.meta.env.PROD && !localHostnames.has(window.location.hostname) && window.location.protocol !== 'https:') {
-    // Redirect to HTTPS version of the same URL
-    window.location.href = 'https:' + window.location.href.substring(window.location.protocol.length)
-  }
-}
-
 function csrfToken() {
-  return document.cookie.split('; ').find((cookie) => cookie.startsWith('als50_csrf='))?.split('=').slice(1).join('') || ''
-}
-
-function errorMessageFromBody(body, status) {
-  const detail = body?.detail
-  if (typeof detail === 'string') return detail
-  if (typeof detail?.message === 'string') return detail.message
-  if (typeof detail?.code === 'string') return detail.code
-  if (detail) return JSON.stringify(detail)
-  return `Request failed (${status})`
+  return document.cookie.split('; ').find((cookie) => cookie.startsWith('als50_csrf='))?.split('=').slice(1).join('=') || ''
 }
 
 async function request(path, options = {}) {
-  // Fix #8: Ensure secure connection for production
-  ensureSecureConnection()
-  
-  const token = csrfToken()
+  const method = (options.method || 'GET').toUpperCase()
+  const csrf = method !== 'GET' && method !== 'HEAD' ? csrfToken() : ''
   const response = await fetch(`${apiBaseUrl}${path}`, {
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(token ? { 'X-CSRF-Token': token } : {}), ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(csrf ? { 'X-CSRF-Token': csrf } : {}), ...options.headers },
     ...options,
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(errorMessageFromBody(body, response.status))
+    const detail = typeof body.detail === 'string' ? body.detail : body.detail?.message
+    const error = new Error(detail || `Request failed (${response.status})`)
+    error.status = response.status
+    throw error
   }
   return response.json()
 }
@@ -74,7 +57,6 @@ export const componentLifecycleApi = {
   decideQuality: (serialNumber, decision) => request(`/component-lifecycle/components/${encodeURIComponent(serialNumber)}/quality`, { method: 'POST', body: JSON.stringify(decision) }),
   updateRepair: (repairId, action, update) => request(`/component-lifecycle/repairs/${encodeURIComponent(repairId)}/${action}`, { method: 'POST', body: JSON.stringify(update) }),
   closeRepairIncident: (repairIncidentId, performedBy) => request(`/component-lifecycle/repairs/by-incident/${encodeURIComponent(repairIncidentId)}/close?performed_by=${encodeURIComponent(performedBy)}`, { method: 'POST' }),
-  markBeyondEconomicalRepair: (repairIncidentId, decision) => request(`/component-lifecycle/repairs/by-incident/${encodeURIComponent(repairIncidentId)}/beyond-economical-repair`, { method: 'POST', body: JSON.stringify(decision) }),
   attachRepairToIncident: (sourceIncidentId, repairIncidentId) => request(`/component-lifecycle/repairs/attach?source_incident_id=${encodeURIComponent(sourceIncidentId)}&repair_incident_id=${encodeURIComponent(repairIncidentId)}`, { method: 'POST' }),
   replaceComponent: (replacement) => request('/component-lifecycle/replacements', {
     method: 'POST',
@@ -102,11 +84,18 @@ export const authenticationApi = {
     accessToken = session.access_token
     return session
   },
-  adEligibilityLogin: async (email) => {
-    const session = await request('/authentication/ad-eligibility-login', { method: 'POST', body: JSON.stringify({ email }) })
+  changePassword: (current_password, new_password) => request('/authentication/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password, new_password }),
+  }),
+  refreshSession: async () => {
+    const session = await request('/authentication/refresh', { method: 'POST' })
     accessToken = session.access_token
     return session
   },
+  resetUserPassword: (username) => request(`/authentication/users/${encodeURIComponent(username)}/reset-password`, {
+    method: 'POST',
+  }),
   logout: async () => {
     const result = await request('/authentication/logout', { method: 'POST' })
     accessToken = ''
@@ -114,8 +103,6 @@ export const authenticationApi = {
   },
   getSettings: () => request('/authentication/settings'),
   updateSettings: (settings) => request('/authentication/settings', { method: 'PUT', body: JSON.stringify(settings) }),
-  getLocalAdminPasswordStatus: () => request('/authentication/local-admin-password'),
-  updateLocalAdminPassword: (passwords) => request('/authentication/local-admin-password', { method: 'PUT', body: JSON.stringify(passwords) }),
   listRoleMappings: () => request('/authentication/role-mappings'),
   saveRoleMapping: (directory_group, mapping) => request(`/authentication/role-mappings/${encodeURIComponent(directory_group)}`, { method: 'PUT', body: JSON.stringify(mapping) }),
   getHealth: () => request('/authentication/health'),

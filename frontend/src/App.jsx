@@ -2,7 +2,7 @@ const sessionContextStorageKey = 'als50-session-context'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, Bell, BookOpen, Building2, CalendarDays, ChevronDown, ChevronRight, CircleHelp,
-  ClipboardList, FileText, LayoutDashboard, Lock, LogIn,
+  ClipboardList, Eye, EyeOff, FileText, LayoutDashboard, Lock, LogIn,
   Mail, Package, Plus, Search, Settings, Shield,
   ShieldCheck, Users, UsersRound, Workflow, Wrench,
 } from 'lucide-react'
@@ -17,7 +17,6 @@ import SubcontractsPage from './pages/SubcontractsPage'
 import ProductMasterPage, { seedProducts } from './pages/ProductMasterPage'
 import ProductMasterMcsPage from './pages/ProductMasterMcsPage'
 import ProductMasterGdtPage, { batteryProductColumns, gseProductColumns, mrlsProductColumns, simulatorProductColumns, smeSteProductColumns, tmvProductColumns, toolsProductColumns, warheadSamProductColumns } from './pages/ProductMasterGdtPage'
-import DamagedExpiredComponentsPage from './pages/DamagedExpiredComponentsPage'
 import ComponentLifecyclePage from './pages/ComponentLifecyclePage'
 import ProductCategoryPage from './pages/ProductCategoryPage'
 import UserManagementPage, { initialUsers } from './pages/UserManagementPage'
@@ -50,7 +49,6 @@ const workspaceNav = [
   { key: 'Contracts', label: 'Contracts', icon: FileText },
   { key: 'Sub-contracts', label: 'Sub-contracts', icon: FileText },
   { key: 'Inventory Master', label: 'Inventory Master', icon: Package },
-  { key: 'Product master Damaged / Expired Components', label: 'Damaged/Expired Components', icon: Package },
   { key: 'Product categories', label: 'Product categories', icon: Package },
   { key: 'Knowledge management', label: 'Knowledge management', icon: BookOpen },
   { key: 'Mail correspondence', label: 'Mail Correspondence', icon: Mail },
@@ -183,12 +181,11 @@ const isStaleReadNotification = (notification, cutoff) => isReadNotification(not
 const assignmentGroupNotifications = (incident, assignmentGroup, groups, users) => {
   const group = groups.find((entry) => entry.active && entry.name === assignmentGroup)
   const createdAt = new Date().toISOString()
-  const eventId = Date.now()
   const memberIds = new Set((group?.memberIds || []).map(String))
   return users
     .filter((user) => user.status === 'Active' && memberIds.has(String(user.id)))
     .map((user) => ({
-      id: `assignment-group-${incident.id}-${eventId}-${user.id}`,
+      id: `assignment-group-${incident.id}-${assignmentGroup}-${user.id}`,
       type: 'assignment-group',
       title: 'New incident assigned to your group',
       incidentId: incident.id,
@@ -281,10 +278,9 @@ const initialAssignmentGroups = [
    Login Page
    ────────────────────────────────────────── */
 function LoginPage({ onLogin }) {
-  const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [adminLogin, setAdminLogin] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [loginError, setLoginError] = useState('')
 
@@ -293,16 +289,19 @@ function LoginPage({ onLogin }) {
     setLoginError('')
     setSubmitting(true)
     try {
-      const session = adminLogin
-        ? await authenticationApi.login({ username, password })
-        : await authenticationApi.adEligibilityLogin(email)
+      const session = await authenticationApi.login({ username, password })
       const sessionUser = session.user || {}
-      onLogin({ name: sessionUser.display_name || (adminLogin ? username : email), email: sessionUser.email || (adminLogin ? username : email), role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
+      onLogin({ name: sessionUser.display_name || username, email: sessionUser.email || username, role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
     } catch (error) {
       setLoginError(error.message || 'Sign-in failed.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const revealPassword = () => {
+    setShowPassword(true)
+    window.setTimeout(() => setShowPassword(false), 3000)
   }
 
   return (
@@ -321,19 +320,42 @@ function LoginPage({ onLogin }) {
         <img className="tata-wordmark" src="/assets/tasl_logo.png" alt="Tata Advanced Systems" />
         <div className="login-card">
           <p className="login-eyebrow">UAT access</p>
-          <h2>{adminLogin ? 'Administrator sign-in' : 'Active Directory sign-in'}</h2>
-          <p className="login-desc">{adminLogin ? 'Use the approved local administrator username and password.' : 'Enter your work email to continue with your Active Directory account.'}</p>
+          <h2>Username sign-in</h2>
+          <p className="login-desc">Sign in with your username and password.</p>
           <form onSubmit={handleSubmit}>
-            {adminLogin ? <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="admin" required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label></div> : <div className="login-field"><label>Work email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" required /></label></div>}
-            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || (adminLogin ? !username.trim() || !password : !email.trim())}><LogIn size={17} /> {submitting ? 'Signing in...' : adminLogin ? 'Sign in as administrator' : 'Continue with Active Directory'}</button></div>
+            <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" required /></label><label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" className="password-visibility-button" onClick={revealPassword} aria-label="Show password for 3 seconds" title="Show password for 3 seconds">{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label></div>
+            <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || !username.trim() || !password}><LogIn size={17} /> {submitting ? 'Signing in...' : 'Sign in'}</button></div>
           </form>
           {loginError && <p className="login-desc" role="alert">{loginError}</p>}
-          <div className="login-footer"><Lock size={13} /> UAT authentication is enforced through Active Directory.</div>
+          <div className="login-footer"><Lock size={13} /> Username and password authentication is enabled.</div>
         </div>
-        <button type="button" className="admin-login-trigger" onClick={() => { setAdminLogin((value) => !value); setEmail(''); setUsername(''); setPassword(''); setLoginError('') }}>{adminLogin ? 'Back to Active Directory' : 'Admin login'}</button>
       </div>
     </div>
   )
+}
+
+function PasswordChangePage({ onComplete, onLogout }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (newPassword !== confirmation) return setError('New passwords do not match.')
+    setError('')
+    setSubmitting(true)
+    try {
+      await authenticationApi.changePassword(currentPassword, newPassword)
+      authenticationApi.clearSession()
+      onComplete()
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to change password.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return <div className="login-screen"><div className="login-form-panel"><div className="login-card"><p className="login-eyebrow">First login</p><h2>Change your password</h2><p className="login-desc">Your temporary password must be changed before you can continue.</p><form onSubmit={handleSubmit}><div className="login-field"><label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label><label>New password<input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={8} required /></label><label>Confirm new password<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label></div><div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting}>{submitting ? 'Changing...' : 'Change password'}</button><button type="button" className="help-link" onClick={onLogout}>Sign out</button></div></form>{error && <p className="login-desc" role="alert">{error}</p>}</div></div></div>
 }
 
 /* ──────────────────────────────────────────
@@ -380,7 +402,7 @@ const defaultReports = [
     name: 'Incidents by customer and priority',
     source: 'Incidents',
     filters: [],
-    visualization: 'bar',
+    visualization: 'customer-priority-matrix',
     fields: incidentReportFields,
     groupBy: ['Customer', 'Priority'],
     createdBy: 'amitabh.sharma@aerofix.in',
@@ -479,7 +501,6 @@ const reconcileBuiltInReports = (storedReports) => {
 function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpersonate, onStopImpersonating }) {
   const dashboardStorageKey = `als50-dashboard-${user.email}`
   const [activePage, setActivePage] = useState('Overview')
-  const [navigationVisit, setNavigationVisit] = useState(0)
   const [reportingVisit, setReportingVisit] = useState(0)
   const [drillReportId, setDrillReportId] = useState(null)
   const [nlpReportDefinition, setNlpReportDefinition] = useState(null)
@@ -1026,6 +1047,18 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     const nextStage = decision === 'Approved' && !isReplacementApproval
       ? getNextProcessStage(incident.repairExecution, incident.status, processes)
       : null
+    const returnTarget = decision === 'Rejected' && !isReplacementApproval
+      ? [...(incident.auditLog || [])].reverse().map((entry) => {
+        const changes = entry.changes || []
+        const statusChange = changes.find((change) => change.field === 'Status' && change.next === incident.status)
+        if (!statusChange) return null
+        return {
+          status: statusChange.previous,
+          assignmentGroup: changes.find((change) => change.field === 'Assigned group')?.previous || '',
+          assignedTo: changes.find((change) => change.field === 'Assigned to')?.previous || '',
+        }
+      }).find((target) => target?.status && target.assignmentGroup)
+      : null
     const nextAssignmentGroup = nextStage?.assignmentGroup || incident.assignmentGroup || incident.group || ''
     const updatedIncident = {
       ...incident,
@@ -1035,6 +1068,14 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         assignmentGroup: nextAssignmentGroup,
         group: nextAssignmentGroup,
         assignedTo: '',
+      } : {}),
+      ...(returnTarget ? {
+        status: returnTarget.status,
+        stage: returnTarget.status,
+        assignmentGroup: returnTarget.assignmentGroup,
+        group: returnTarget.assignmentGroup,
+        assignedTo: returnTarget.assignedTo,
+        postRepairQcDecision: '',
       } : {}),
       groupApproval: {
         ...approval,
@@ -1059,6 +1100,11 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
           { field: 'Approval decision', previous: 'Pending', next: decision },
           { field: 'Approval reason', previous: '', next: reason },
           { field: 'Approval group', previous: '', next: approval.assignmentGroup || incident.assignmentGroup || incident.group || '--' },
+          ...(returnTarget ? [
+            { field: 'Status', previous: incident.status, next: returnTarget.status },
+            { field: 'Assigned group', previous: incident.assignmentGroup || incident.group || '--', next: returnTarget.assignmentGroup },
+            { field: 'Assigned to', previous: incident.assignedTo || '--', next: returnTarget.assignedTo || '--' },
+          ] : []),
           ...(nextStage ? [
             { field: 'Status', previous: incident.status, next: nextStage.status },
             { field: 'Assigned group', previous: incident.assignmentGroup || incident.group || '--', next: nextAssignmentGroup || '--' },
@@ -1070,6 +1116,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     await recordApi.bulkUpsert('incidents', [{ record_id: updatedIncident.id, payload: updatedIncident }])
     setIncidents((current) => current.map((entry) => entry.id === updatedIncident.id ? updatedIncident : entry))
     if (nextStage && nextAssignmentGroup !== (incident.assignmentGroup || incident.group || '')) createAssignmentNotifications(updatedIncident, nextAssignmentGroup)
+    if (returnTarget && returnTarget.assignmentGroup !== (incident.assignmentGroup || incident.group || '')) createAssignmentNotifications(updatedIncident, returnTarget.assignmentGroup)
   }
   const openIncidentFromApproval = (incidentId) => {
     setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, activeTab: 'Notes', navigationId: Date.now() })
@@ -1081,10 +1128,20 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const currentUserGroupNames = assignmentGroups
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
     .map((group) => group.name)
-  const canCreateIncidents = isAdministrator || incidentCreationGroupIds.some((groupId) => currentUserGroupNames.some((groupName) => String(assignmentGroups.find((group) => group.name === groupName)?.id) === groupId))
+  const canCreateIncidents = isAdministrator
+    || currentUserGroupNames.includes('Customer Support Management Group')
   const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
   const hasWarrantyQualityClaimsAccess = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Advisory Group')
   const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
+  const canViewCsmReports = isAdministrator || isCustomerSupportManagementMember
+  const dashboardReports = useMemo(() => reports.filter((report) => (report.csmOnly && canViewCsmReports)
+    || (!report.csmOnly && (report.createdBy === user.email || report.sharedWith?.includes(user.role) || report.sharedWith?.includes(user.name)))), [canViewCsmReports, reports, user.email, user.name, user.role])
+  useEffect(() => {
+    const allowedReportIds = new Set(dashboardReports.map((report) => report.id))
+    setDashboardLayout((current) => current.every((tile) => allowedReportIds.has(tile.i))
+      ? current
+      : current.filter((tile) => allowedReportIds.has(tile.i)))
+  }, [dashboardReports])
   const visibleIncidentCount = incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group)).length
   useEffect(() => {
     if (!persistenceReady) return
@@ -1124,26 +1181,13 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       setActivePage('Incidents')
     }
   }
-  const resetNavigationView = () => {
-    setIncidentDrill(null)
-    setProductAssetDrill(null)
-    setDrillReportId(null)
-    setNlpReportDefinition(null)
-    setPendingSubcontractContract('')
-    setNavigationVisit((current) => current + 1)
-  }
-  const handleSidebarNavigationClick = (event) => {
-    const button = event.target.closest('button')
-    if (!button || (!button.closest('.nav-submenu') && button.getAttribute('aria-expanded') !== null)) return
-    resetNavigationView()
-  }
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
       return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
-      case 'Overview': return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
+      case 'Overview': return <OverviewPage user={user} reports={dashboardReports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
@@ -1162,8 +1206,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
       case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
       case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
-      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} onOpenDamagedComponents={() => setActivePage('Product master Damaged / Expired Components')} />
-      case 'Product master Damaged / Expired Components': return <DamagedExpiredComponentsPage onBack={() => setActivePage('Product master MRLS')} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
         case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} />
       case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
       case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
@@ -1176,7 +1219,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         setEvents={setCalendarEvents}
         currentUser={currentUserRecord}
       />
-      case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} canViewCsmReports={isAdministrator || isCustomerSupportManagementMember} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
+      case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} canViewCsmReports={canViewCsmReports} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
       case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
       case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} onGroupRenamed={renameAssignmentGroupReferences} />
       case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} onRepairExecutionRenamed={renameRepairExecutionReferences} />
@@ -1186,7 +1229,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} data={applicationData} />
       case 'System settings': return <SystemSettingsPage assignmentGroups={assignmentGroups} incidentCreationGroupIds={incidentCreationGroupIds} onSaveIncidentCreationGroups={saveIncidentCreationGroups} />
       case 'Authentication settings': return <AuthenticationSettingsPage />
-      default: return <OverviewPage user={user} reports={reports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} />
+      default: return <OverviewPage user={user} reports={dashboardReports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} />
     }
   }
 
@@ -1200,7 +1243,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
           <div><strong>S - UAV</strong><span>CSM Portal</span></div>
         </div>
 
-        <nav aria-label="Primary navigation" onClickCapture={handleSidebarNavigationClick}>
+        <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
           {workspaceNav.filter(({ key, claimsOnly }) => claimsOnly ? hasWarrantyQualityClaimsAccess : hasFullWorkspaceAccess || standardWorkspaceKeys.has(key)).map(({ key, label, icon: Icon, count }) => {
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
@@ -1266,7 +1309,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         <section className="content">
           {searchOpen && <div className="search-panel"><Search size={18} /><input autoFocus placeholder="Search incidents, customers, contracts..." /><kbd>Esc</kbd></div>}
           {notificationToasts.length > 0 && <aside className="notification-toast-stack" aria-live="polite">{notificationToasts.map((notification) => <button type="button" key={notification.id} onClick={() => openNotification(notification)}><Bell size={16} /><span><strong>{notification.title}</strong><small>{notification.workNotes}</small></span></button>)}</aside>}
-          <div key={`${activePage}-${navigationVisit}`}>{renderPage()}</div>
+          {renderPage()}
         </section>
       </main>
       {impersonationCandidate && <div className="stage-confirmation-backdrop"><section className="stage-confirmation-dialog" role="dialog" aria-modal="true" aria-label="Confirm user impersonation"><h2>Impersonate {impersonationCandidate.name}?</h2><p>You are about to act as {impersonationCandidate.name} ({impersonationCandidate.role}). Their assigned access and permissions will apply until you return to your administrator session.</p><footer><button type="button" className="incident-cancel-button" onClick={() => setImpersonationCandidate(null)}>Cancel</button><button type="button" className="incident-next-stage-button" onClick={() => { onImpersonate(impersonationCandidate); setImpersonationCandidate(null) }}>Confirm impersonation</button></footer></section></div>}
@@ -1285,6 +1328,10 @@ export default function App() {
   })
   const [user, setUser] = useState(() => restoredSession?.user || null)
   const [authenticatedUser, setAuthenticatedUser] = useState(() => restoredSession?.authenticatedUser || null)
+  const userRef = useRef(user)
+  const authenticatedUserRef = useRef(authenticatedUser)
+  const lastSessionRenewalRef = useRef(0)
+  const sessionRenewalInFlightRef = useRef(false)
   const [loginUsers, setLoginUsers] = useState([])
   const [loginAssignmentGroups, setLoginAssignmentGroups] = useState([])
   const [loginDirectoryReady, setLoginDirectoryReady] = useState(false)
@@ -1300,6 +1347,48 @@ export default function App() {
       .catch((error) => console.warn('Unable to load demo login identities.', error))
     return () => { active = false }
   }, [])
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
+  useEffect(() => {
+    authenticatedUserRef.current = authenticatedUser
+  }, [authenticatedUser])
+  useEffect(() => {
+    if (!authenticatedUser || authenticatedUser.session?.must_change_password) return undefined
+    const renewForActivity = () => {
+      if (document.visibilityState !== 'visible' || sessionRenewalInFlightRef.current) return
+      const now = Date.now()
+      if (now - lastSessionRenewalRef.current < 60_000) return
+      lastSessionRenewalRef.current = now
+      sessionRenewalInFlightRef.current = true
+      authenticationApi.refreshSession()
+        .then((session) => {
+          const currentAuthenticatedUser = authenticatedUserRef.current
+          if (!currentAuthenticatedUser) return
+          const nextAuthenticatedUser = { ...currentAuthenticatedUser, session: { ...currentAuthenticatedUser.session, ...session } }
+          const nextUser = userRef.current ? { ...userRef.current, session: nextAuthenticatedUser.session } : null
+          authenticatedUserRef.current = nextAuthenticatedUser
+          userRef.current = nextUser
+          setAuthenticatedUser(nextAuthenticatedUser)
+          setUser(nextUser)
+          persistSessionContext(nextAuthenticatedUser, nextUser)
+        })
+        .catch((error) => {
+          if (error.status !== 401) {
+            console.warn('Unable to renew the active session.', error)
+            return
+          }
+          sessionStorage.removeItem(sessionContextStorageKey)
+          authenticationApi.clearSession()
+          setUser(null)
+          setAuthenticatedUser(null)
+        })
+        .finally(() => { sessionRenewalInFlightRef.current = false })
+    }
+    const activityEvents = ['pointerdown', 'keydown', 'input', 'change', 'scroll', 'touchstart']
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, renewForActivity, { passive: true }))
+    return () => activityEvents.forEach((eventName) => window.removeEventListener(eventName, renewForActivity))
+  }, [authenticatedUser?.session?.must_change_password])
   const login = (nextUser) => { setAuthenticatedUser(nextUser); setUser(nextUser); persistSessionContext(nextUser, nextUser) }
   const logout = () => {
     sessionStorage.removeItem(sessionContextStorageKey)
@@ -1319,6 +1408,6 @@ export default function App() {
   const canImpersonate = String(authenticatedUser?.role || '').toLowerCase() === 'administrator'
   const impersonatingUser = Boolean(authenticatedUser && user && authenticatedUser.email !== user.email)
   if (!user) return <LoginPage onLogin={login} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} />
-  return <Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={(nextUser) => setUser({ ...nextUser, session: authenticatedUser?.session })} onStopImpersonating={() => setUser(authenticatedUser)} />
-  return <Dashboard user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} />
+  if (authenticatedUser?.session?.must_change_password) return <PasswordChangePage onComplete={() => { sessionStorage.removeItem(sessionContextStorageKey); setUser(null); setAuthenticatedUser(null) }} onLogout={logout} />
+  return <Dashboard key={user.email} user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} />
 }
