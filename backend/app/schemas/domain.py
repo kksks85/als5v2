@@ -86,6 +86,43 @@ class ComponentReceiptCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=5000)
 
 
+class ContractMrlsLineCreate(BaseModel):
+    product_category: str = Field(min_length=1, max_length=160)
+    product_reference: str | None = Field(default=None, max_length=160)
+    product_master_record_id: int | None = Field(default=None, ge=1)
+    component_type: str = Field(min_length=1, max_length=160)
+    subsystem: str | None = Field(default=None, max_length=160)
+    part_number: str | None = Field(default=None, max_length=160)
+    sap_part_number: str | None = Field(default=None, max_length=160)
+    quantity: int = Field(ge=1, le=10000)
+    created_by: str = Field(min_length=1, max_length=180)
+
+
+class ContractMrlsGenerate(BaseModel):
+    quantity: int | None = Field(default=None, ge=1, le=10000)
+    generated_by: str = Field(min_length=1, max_length=180)
+
+
+class ContractMrlsRecordInput(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    requirement_id: str = Field(min_length=1, max_length=160)
+    spare_category: str = Field(min_length=1, max_length=160)
+    product_serial_number: str = Field(default="", max_length=160)
+    material_serial_number: str = Field(min_length=1, max_length=160)
+    part_number: str = Field(min_length=1, max_length=160)
+    sap_part_number: str | None = Field(default=None, max_length=160)
+    material_description: str = Field(min_length=1, max_length=500)
+    batch_number: str | None = Field(default=None, max_length=160)
+    quantity: int = Field(default=1, ge=1, le=1)
+    unit_of_measurement: str = Field(min_length=1, max_length=80)
+    remarks: str | None = Field(default=None, max_length=5000)
+
+
+class ContractSave(BaseModel):
+    payload: dict[str, Any]
+    mrls_records: list[ContractMrlsRecordInput] = Field(default_factory=list, max_length=10000)
+
+
 class ComponentQualityDecision(BaseModel):
     performed_by: str = Field(min_length=1, max_length=180)
     accepted: bool

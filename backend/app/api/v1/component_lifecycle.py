@@ -7,7 +7,7 @@ from app.database import get_db
 from app.schemas.domain import BeyondEconomicalRepairCreate, ComponentQualityDecision, ComponentReceiptCreate, ComponentRepairUpdate, ComponentReplacementCreate
 from app.services.component_lifecycle import active_uav_configuration, attach_repair_to_incident, close_repair_incident, component_detail, list_components, mark_beyond_economical_repair, perform_replacement, quality_decision, receive_component, repair_queue, update_repair
 # Fix #2: Import authentication
-from app.api.v1.authentication import require_session, require_csrf
+from app.api.v1.authentication import require_administrator, require_session, require_csrf
 
 router = APIRouter(prefix="/component-lifecycle", tags=["component-lifecycle"])
 
@@ -81,7 +81,7 @@ def create_replacement(
 def create_component_receipt(
     command: ComponentReceiptCreate, 
     database: Session = Depends(get_db),
-    claims: dict = Depends(require_session),  # Fix #2: Add authentication
+    administrator: None = Depends(require_administrator),
     _: None = Depends(require_csrf)  # Fix #3: Add CSRF protection
 ) -> dict[str, Any]:
     try:

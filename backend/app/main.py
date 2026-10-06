@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.authentication import router as authentication_router
+from app.api.v1.contract_mrls import router as contract_mrls_router
 from app.api.v1.component_lifecycle import router as component_lifecycle_router
 from app.api.v1.entra import router as entra_router
 from app.api.v1.health import router as health_router
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(records_router, prefix="/api/v1")
 app.include_router(component_lifecycle_router, prefix="/api/v1")
+app.include_router(contract_mrls_router, prefix="/api/v1")
 app.include_router(entra_router, prefix="/api/v1")
 app.include_router(authentication_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")

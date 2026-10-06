@@ -16,11 +16,13 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("local_admin_credentials"):
+        return
     op.create_table(
         "local_admin_credentials",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("password_hash", sa.String(length=512), nullable=False),
-        sa.Column("changed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("changed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
 
 

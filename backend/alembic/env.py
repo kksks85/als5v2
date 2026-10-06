@@ -29,17 +29,18 @@ def run_migrations_online() -> None:
             # Historical revisions contain PostgreSQL JSONB syntax. A fresh SQL Server
             # deployment uses the current portable model schema as its baseline.
             baseline_exists = connection.execute(text("SELECT OBJECT_ID('alembic_version', 'U')")).scalar()
-            if baseline_exists:
+            if not baseline_exists:
+                target_metadata.create_all(connection)
+                connection.execute(text("IF OBJECT_ID('alembic_version', 'U') IS NULL CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+                connection.execute(text("DELETE FROM alembic_version"))
+                connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('20261006_31')"))
+                connection.commit()
                 return
-            target_metadata.create_all(connection)
-            connection.execute(text("IF OBJECT_ID('alembic_version', 'U') IS NULL CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
-            connection.execute(text("DELETE FROM alembic_version"))
-            connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('20260819_27')"))
-            connection.commit()
-            return
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
+        if connection.in_transaction():
+            connection.commit()
 
 
 if context.is_offline_mode():

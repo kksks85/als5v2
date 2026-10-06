@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, QueryRecord, RepairExecutionRecord, SubcontractRecord, SystemSettingsRecord, UserRecord
+from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractMrlsRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, QueryRecord, RepairExecutionRecord, SubcontractRecord, SystemSettingsRecord, UserRecord
 from app.api.v1.authentication import require_administrator, require_csrf, require_session
 from app.services.authentication import AUTH_PAYLOAD_KEY, provision_user_credentials, public_user_payload
 
@@ -98,6 +98,10 @@ def validate_resource(resource: str) -> str:
     return resource
 
 
+def is_contract_mrls_inventory_record(resource: str, record_id: str) -> bool:
+    return resource == "mrls_products" and record_id.startswith("contract-mrls-")
+
+
 def prune_expired_email_logs(database: Session) -> None:
     database.execute(delete(EmailLogRecord).where(EmailLogRecord.created_at < datetime.now(UTC) - timedelta(days=10)))
 
@@ -113,6 +117,27 @@ def list_records(resource: str, claims: dict = Depends(require_session), databas
         return {"items": [{"record_id": record.record_id, "payload": public_user_payload(record.payload) if resource == "users" else record.payload} for record in records]}
     model = RESOURCE_MODELS[resource]
     records = database.scalars(select(model).order_by(model.record_id)).all()
+    if resource == "contracts":
+        mrls_records_by_contract: dict[int, list[dict[str, Any]]] = {}
+        for mrls_record in database.scalars(select(ContractMrlsRecord).order_by(ContractMrlsRecord.id)).all():
+            mrls_records_by_contract.setdefault(mrls_record.contract_id, []).append({
+                "id": mrls_record.client_record_id,
+                "contractMrlsRecordId": mrls_record.id,
+                "requirementId": mrls_record.requirement_id,
+                "spareCategory": mrls_record.spare_category,
+                "product_serial_number": mrls_record.product_serial_number,
+                "material_serial_number": mrls_record.material_serial_number,
+                "part_number": mrls_record.part_number,
+                "sap_part_number": mrls_record.sap_part_number or "",
+                "material_description": mrls_record.material_description,
+                "batch_number": mrls_record.batch_number or "",
+                "customer": mrls_record.customer,
+                "contract_number": mrls_record.contract_number,
+                "quantity": str(mrls_record.quantity),
+                "unit_of_measurement": mrls_record.unit_of_measurement,
+                "remarks": mrls_record.remarks or "",
+            })
+        return {"items": [{"record_id": record.record_id, "payload": {**record.payload, "mrlsRecords": mrls_records_by_contract.get(record.id, [])}} for record in records]}
     return {"items": [{"record_id": record.record_id, "payload": public_user_payload(record.payload) if resource == "users" else record.payload} for record in records]}
 
 
@@ -138,7 +163,13 @@ def bulk_upsert_records(resource: str, body: BulkRecordsInput, _: None = Depends
 def replace_records(resource: str, body: BulkRecordsInput, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, int]:
     """Synchronize a complete client collection, including removals, atomically."""
     validate_resource(resource)
-    if resource in PRODUCT_MASTER_RESOURCES:
+    if resource == "mrls_products":
+        # Contract MRLS inventory is owned by the Contract workflow, not a browser collection.
+        database.execute(delete(ProductMasterRecord).where(
+            ProductMasterRecord.resource == resource,
+            ~ProductMasterRecord.record_id.like("contract-mrls-%"),
+        ))
+    elif resource in PRODUCT_MASTER_RESOURCES:
         database.execute(delete(ProductMasterRecord).where(ProductMasterRecord.resource == resource))
     else:
         database.execute(delete(RESOURCE_MODELS[resource]))
@@ -150,6 +181,8 @@ def replace_records(resource: str, body: BulkRecordsInput, _: None = Depends(req
 @router.delete("/{resource}/{record_id}")
 def delete_record(resource: str, record_id: str, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, str]:
     validate_resource(resource)
+    if is_contract_mrls_inventory_record(resource, record_id):
+        raise HTTPException(status_code=403, detail="Contract-created MRLS inventory records can only be removed by deleting their Contract MRLS entry.")
     if resource in PRODUCT_MASTER_RESOURCES:
         database.execute(delete(ProductMasterRecord).where(ProductMasterRecord.resource == resource, ProductMasterRecord.record_id == record_id))
         database.commit()
@@ -163,6 +196,8 @@ def delete_record(resource: str, record_id: str, _: None = Depends(require_admin
 def write_records(resource: str, records: list[RecordInput], database: Session) -> None:
     if not records:
         return
+    if any(is_contract_mrls_inventory_record(resource, record.record_id) for record in records):
+        raise HTTPException(status_code=403, detail="Contract-created MRLS inventory records can only be maintained from the Contract MRLS workflow.")
     if resource == "knowledge_documents":
         for record in records:
             reject_compressed_knowledge_attachments(record.payload)

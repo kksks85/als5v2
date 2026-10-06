@@ -1383,6 +1383,21 @@ main { min-width:0; display:flex; flex-direction:column; }
 .customer-form-section-heading h2 { margin-bottom:4px; }
 .customer-form-section-heading p { margin:0; color:var(--muted); font-size:11px; line-height:1.45; }
 .contract-subcontract-error { margin:0 0 10px; color:#c9443e; font-size:11px; font-weight:600; }
+.contract-spare-add-row { display:grid; grid-template-columns:minmax(260px,2fr) minmax(105px,.55fr) auto; align-items:end; gap:10px; margin-bottom:12px; }
+.contract-spare-add-row .compact-button { height:34px; margin-bottom:0; white-space:nowrap; }
+.contract-spare-category-admin { display:grid; grid-template-columns:minmax(260px,2fr) auto; align-items:end; gap:10px; margin:0 0 12px; padding:10px; border:1px solid #d8e4ee; background:#f8fbfe; }
+.contract-spare-category-admin .compact-button { height:34px; margin-bottom:0; white-space:nowrap; }
+.contract-spare-category-admin small { grid-column:1 / -1; color:#52708b; font-size:11px; }
+.contract-mrls-details { border-top:1px solid #dce5f1; padding-top:16px; }
+.contract-mrls-requirements { display:grid; gap:8px; margin-bottom:14px; }
+.contract-mrls-requirement { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:9px 10px; border:1px solid #d8e4ee; background:#f8fbfe; font-size:12px; }
+.contract-mrls-requirement strong { min-width:180px; color:#062b60; }
+.contract-mrls-requirement span { color:#52708b; }
+.contract-mrls-requirement.incomplete { border-color:#e6b46f; background:#fff9ef; }
+.contract-mrls-requirement .compact-button { margin-left:auto; }
+.contract-mrls-table { min-width:1550px; }
+.contract-mrls-table th,.contract-mrls-table td { white-space:nowrap; }
+.contract-mrls-table input { min-width:130px; }
 .customer-form-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:13px 18px; }
 .customer-field { display:flex; flex-direction:column; gap:5px; }
 .customer-field span { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
@@ -1412,6 +1427,7 @@ main { min-width:0; display:flex; flex-direction:column; }
 .add-contact-section h3 { margin:0 0 14px; font-size:13px; font-weight:700; }
 .add-contact-btn { padding:10px 16px; background:#3a7dda; color:#fff; border:0; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; margin-top:10px; }
 .add-contact-btn:hover { background:#2d6bc4; }
+@media(max-width:700px){.contract-spare-add-row,.contract-spare-category-admin { grid-template-columns:1fr; }.contract-spare-add-row .compact-button,.contract-spare-category-admin .compact-button { justify-content:center; }.contract-mrls-requirement { align-items:flex-start; flex-direction:column; }.contract-mrls-requirement .compact-button { margin-left:0; }}
 .contact-form-actions .customer-cancel-button { margin-top:10px; }
 
 .customer-form-footer { display:flex; gap:8px; justify-content:flex-end; padding:16px 24px; background:#fff; border-top:1px solid #dce5f1; }

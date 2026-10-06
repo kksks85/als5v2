@@ -64,6 +64,22 @@ export const componentLifecycleApi = {
   }),
 }
 
+export const contractMrlsApi = {
+  saveContract: (recordId, contract) => request(`/contract-mrls/contracts/${encodeURIComponent(recordId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      payload: contract,
+      mrls_records: (contract.mrlsRecords || []).map((record) => ({
+        ...record,
+        requirement_id: record.requirementId,
+        spare_category: record.spareCategory,
+        quantity: Number(record.quantity || 1),
+      })),
+    }),
+  }),
+  deleteContract: (recordId) => request(`/contract-mrls/contracts/${encodeURIComponent(recordId)}`, { method: 'DELETE' }),
+}
+
 export const authenticationApi = {
   restoreSession: (session) => {
     accessToken = session?.access_token || ''

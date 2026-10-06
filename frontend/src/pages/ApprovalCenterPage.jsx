@@ -3,14 +3,13 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock, Download, Eye, GitBranch, 
 
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
 
-const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Contract amendment', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval', 'Material Replacement Approval']
+const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval', 'Material Replacement Approval']
 const APPROVAL_PRIORITIES = ['Critical', 'High', 'Normal', 'Low']
-const seedApprovals = (currentUser, users, incidents, contracts, knowledgeDocuments) => {
+const seedApprovals = (currentUser, users, incidents, knowledgeDocuments) => {
   const approvers = users.filter((user) => user.role === 'Manager' || user.role === 'Administrator')
   const delegates = users.filter((user) => user.role === 'Manager')
   const subjects = [
     ...incidents.slice(0, 8).map((incident) => ({ ref: incident.id, title: `Closure approval: ${incident.title.slice(0, 55)}`, type: 'Incident closure' })),
-    ...contracts.slice(0, 4).map((contract) => ({ ref: contract.number, title: `Amendment approval: ${contract.number} – ${contract.customer}`, type: 'Contract amendment' })),
     ...knowledgeDocuments.slice(0, 4).map((doc) => ({ ref: doc.code || doc.id, title: `Release approval: ${doc.title}`, type: 'Document release' })),
   ]
   const statuses = ['Pending', 'Pending', 'Pending', 'Approved', 'Rejected', 'Delegated']
@@ -110,8 +109,8 @@ const approvalDisplayId = (approval) => approval.displayId || approval.id
 const statusClass = (status) => ({ Pending: 'approval-badge-pending', Approved: 'approval-badge-approved', Rejected: 'approval-badge-rejected', Delegated: 'approval-badge-delegated' }[status] || '')
 const priorityClass = (priority) => ({ Critical: 'priority-critical', High: 'priority-high', Normal: 'priority-normal', Low: 'priority-low' }[priority] || '')
 
-export default function ApprovalCenterPage({ currentUser, view, users = [], incidents = [], contracts = [], knowledgeDocuments = [], onResolveGroupApproval, onOpenIncident }) {
-  const allApprovals = useMemo(() => [...incidentGroupApprovals(incidents), ...seedApprovals(currentUser, users, incidents, contracts, knowledgeDocuments)], [currentUser, users, incidents, contracts, knowledgeDocuments])
+export default function ApprovalCenterPage({ currentUser, view, users = [], incidents = [], knowledgeDocuments = [], onResolveGroupApproval, onOpenIncident }) {
+  const allApprovals = useMemo(() => [...incidentGroupApprovals(incidents), ...seedApprovals(currentUser, users, incidents, knowledgeDocuments)], [currentUser, users, incidents, knowledgeDocuments])
   const [selected, setSelected] = useState(null)
   const [decisionRequest, setDecisionRequest] = useState(null)
   const [search, setSearch] = useState('')

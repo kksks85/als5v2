@@ -45,6 +45,53 @@ class ProductAssetRecord(RecordMixin, Base):
     __tablename__ = "product_assets"
 
 
+class ContractMrlsLine(Base):
+    __tablename__ = "contract_mrls_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"), index=True)
+    contract_number: Mapped[str] = mapped_column(String(160), index=True)
+    customer: Mapped[str | None] = mapped_column(String(180), index=True)
+    product_category: Mapped[str] = mapped_column(String(160), index=True)
+    product_reference: Mapped[str | None] = mapped_column(String(160), index=True)
+    product_master_record_id: Mapped[int | None] = mapped_column(ForeignKey("product_master_records.id"), index=True)
+    component_type: Mapped[str] = mapped_column(String(160))
+    subsystem: Mapped[str | None] = mapped_column(String(160))
+    part_number: Mapped[str | None] = mapped_column(String(160))
+    sap_part_number: Mapped[str | None] = mapped_column(String(160))
+    quantity: Mapped[int] = mapped_column(Integer)
+    generated_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="planned", index=True)
+    created_by: Mapped[str] = mapped_column(String(180))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ContractMrlsRecord(Base):
+    __tablename__ = "contract_mrls_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"), index=True)
+    client_record_id: Mapped[str] = mapped_column(String(160), index=True)
+    requirement_id: Mapped[str] = mapped_column(String(160), index=True)
+    spare_category: Mapped[str] = mapped_column(String(160), index=True)
+    product_serial_number: Mapped[str] = mapped_column(String(160))
+    material_serial_number: Mapped[str] = mapped_column(String(160), index=True)
+    part_number: Mapped[str] = mapped_column(String(160))
+    sap_part_number: Mapped[str | None] = mapped_column(String(160))
+    material_description: Mapped[str] = mapped_column(String(500))
+    batch_number: Mapped[str | None] = mapped_column(String(160))
+    customer: Mapped[str] = mapped_column(String(180), index=True)
+    contract_number: Mapped[str] = mapped_column(String(160), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    unit_of_measurement: Mapped[str] = mapped_column(String(80))
+    remarks: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(180))
+    updated_by: Mapped[str] = mapped_column(String(180))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ComponentInstance(Base):
     __tablename__ = "component_instances"
 
@@ -59,6 +106,8 @@ class ComponentInstance(Base):
     location_reference: Mapped[str | None] = mapped_column(String(160), index=True)
     customer: Mapped[str | None] = mapped_column(String(180), index=True)
     contract_number: Mapped[str | None] = mapped_column(String(160), index=True)
+    contract_mrls_line_id: Mapped[int | None] = mapped_column(ForeignKey("contract_mrls_lines.id"), index=True)
+    created_by: Mapped[str | None] = mapped_column(String(180), index=True)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

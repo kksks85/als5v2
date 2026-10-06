@@ -75,7 +75,6 @@ export const toolsProductColumns = [
 ]
 
 export const mrlsProductColumns = [
-  { key: 'product_serial_number', label: 'MRLS Component ID', required: true, width: 175 },
   { key: 'part_number', label: 'Part Number', required: true, width: 150 },
   { key: 'sap_part_number', label: 'SAP Part number', required: false, width: 165 },
   { key: 'material_description', label: 'Material Description', required: true, width: 230 },
@@ -116,7 +115,7 @@ const emptyProductRecord = (recordCount, idPrefix, columns) => ({
   ...Object.fromEntries(columns.map(({ key }) => [key, key === 'product_serial_number' ? `${idPrefix.toUpperCase()}-${String(recordCount + 1).padStart(3, '0')}` : ''])),
 })
 
-export default function ProductMasterGdtPage({ records, setRecords, canManageInventory = false, canImportInventory = false, masterName = 'GDT', idPrefix = 'gdt', columns = gdtColumns, onOpenDamagedComponents }) {
+export default function ProductMasterGdtPage({ records, setRecords, canManageInventory = false, canImportInventory = false, allowManualEntry = canManageInventory, manualEntryLabel = 'Add material', masterName = 'GDT', idPrefix = 'gdt', columns = gdtColumns, onOpenDamagedComponents }) {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [visibleColumns, setVisibleColumns] = useState(columns.map(({ key }) => key))
@@ -169,11 +168,11 @@ export default function ProductMasterGdtPage({ records, setRecords, canManageInv
 
   return <>
     {onOpenDamagedComponents && <div className="product-master-secondary-nav"><button className="compact-button secondary" onClick={onOpenDamagedComponents}>Damaged/Expired Components</button></div>}
-    <div className="incident-list-head product-master-heading"><div className="incident-list-title"><h1>Product Master - {masterName}</h1><p>Material and item inventory register for {masterName}.</p></div>{canImportInventory && <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>}</div>
+    <div className="incident-list-head product-master-heading"><div className="incident-list-title"><h1>Product Master - {masterName}</h1><p>{masterName === 'MRLS' ? 'View MRLS records created from Contract → MRLS / Spares. Contract MRLS records appear here immediately when saved.' : `Material and item inventory register for ${masterName}.`}</p></div>{canImportInventory && allowManualEntry && <button className="compact-button secondary" onClick={exportTemplate}><Download size={15} /> Download Excel template</button>}</div>
     <section className="incident-list-page product-register-page" aria-label={`${masterName} product register`}>
       <div className="incident-command-bar product-command-bar">
         <div className="incident-search"><Search size={15} /><input placeholder={`Search all ${masterName} product fields...`} value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} /></div><span className="incident-list-count">{filteredRecords.length} of {records.length} records</span>
-        <div className="incident-command-actions product-command-actions"><button className="compact-button secondary" onClick={() => setShowColumns((open) => !open)}><Settings2 size={15} /> Columns <ChevronDown size={14} /></button>{canImportInventory && <><input ref={importInput} type="file" accept=".xlsx,.xls" onChange={handleImportWorkbook} hidden /><button className="compact-button primary" onClick={() => importInput.current?.click()}><Upload size={15} /> Import Excel</button></>}{canManageInventory && <button className="compact-button primary" onClick={() => setEditingRecord(emptyProductRecord(records.length, idPrefix, columns))}><Plus size={15} /> Add material</button>}</div>
+        <div className="incident-command-actions product-command-actions"><button className="compact-button secondary" onClick={() => setShowColumns((open) => !open)}><Settings2 size={15} /> Columns <ChevronDown size={14} /></button>{canImportInventory && allowManualEntry && <><input ref={importInput} type="file" accept=".xlsx,.xls" onChange={handleImportWorkbook} hidden /><button className="compact-button primary" title={masterName === 'MRLS' ? 'Exceptional administrator-only direct MRLS entry' : undefined} onClick={() => importInput.current?.click()}><Upload size={15} /> Import Excel</button></>}{allowManualEntry && <button className="compact-button primary" title={masterName === 'MRLS' ? 'Exceptional administrator-only direct MRLS entry' : undefined} onClick={() => setEditingRecord(emptyProductRecord(records.length, idPrefix, columns))}><Plus size={15} /> {manualEntryLabel}</button>}</div>
         {showColumns && <div className="column-picker product-column-picker"><div className="column-picker-head"><strong>Display columns</strong><button onClick={() => setShowColumns(false)}><X size={15} /></button></div>{columns.map(({ key, label }) => <label key={key}><input type="checkbox" checked={visibleColumns.includes(key)} onChange={() => toggleColumn(key)} /> {label}</label>)}</div>}
       </div>
       {importPreview && <section className="import-step-card product-master-import-review"><div className="import-step-heading"><span><FileSpreadsheet size={14} /></span><div><h2>Workbook review</h2><p>{importPreview.fileName}: {importPreview.rows.length} valid row(s), {importPreview.invalidRows.length} invalid row(s), {importPreview.skippedSheets.length} skipped sheet(s).</p></div></div>{importPreview.invalidRows.length > 0 && <p className="import-review-note error">Rows must include: {columns.filter((column) => column.required).map((column) => column.label).join(', ')}.</p>}<div className="import-actions-row"><button className="compact-button primary" disabled={!importPreview.rows.length || importPreview.invalidRows.length > 0} onClick={commitImport}><Upload size={15} /> Import {importPreview.rows.length} row(s)</button></div></section>}

@@ -32,7 +32,7 @@ import KnowledgeManagementPage, { seedDocuments } from './pages/KnowledgeManagem
 import ReportingPage from './pages/ReportingPage'
 import ApprovalCenterPage from './pages/ApprovalCenterPage'
 import WarrantyQualityClaimsPage from './pages/WarrantyQualityClaimsPage'
-import { authenticationApi, notificationApi, recordApi } from './data/api'
+import { authenticationApi, contractMrlsApi, notificationApi, recordApi } from './data/api'
 import { ensureProductCategoryContractDeliverables, getProductCategories, reconcileProductAssets } from './data/productCategoryRegistry'
 import { customerAcceptanceStage, getConfiguredProcesses, getNextProcessStage, normalizeSiteRepairAcceptanceStages, processConfigurationStorageKey } from './data/processConfiguration'
 import { seedBatteryProducts, seedGdtProducts, seedGseProducts, seedMastProducts, seedMcsProducts, seedMrlsProducts, seedSimulatorProducts, seedSmeSteProducts, seedTmvProducts, seedToolsProducts, seedWarheadSamProducts } from './data/productMasterSeeds'
@@ -121,6 +121,7 @@ const persistSessionContext = (authenticatedUser, user) => sessionStorage.setIte
 const normalizeCategoryComponents = (records, category) => records.map((record) => ({
   ...record,
   product_category: category,
+  contractNumber: record.contract_number || record.contractNumber || '',
   batch_or_po_number: record.batch_or_po_number || record.batch_number || '',
   material_serial_number: record.material_serial_number || record.item_serial_number || `${record.product_serial_number || 'PRODUCT'}-${record.part_number || 'COMPONENT'}`,
   required_quantity: record.required_quantity || record.quantity || '',
@@ -563,6 +564,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [calendarEvents, setCalendarEvents] = useState([])
   const [assignmentGroups, setAssignmentGroups] = useState(initialAssignmentGroups)
   const [incidentCreationGroupIds, setIncidentCreationGroupIds] = useState([])
+  const [contractSpareCategories, setContractSpareCategories] = useState([])
   const [users, setUsers] = useState(initialUsers)
   const [repairExecutions, setRepairExecutions] = useState(initialRepairExecutions)
   const [processes, setProcesses] = useState(() => getConfiguredProcesses())
@@ -635,8 +637,10 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   useEffect(() => {
     let active = true
     recordApi.list('system_settings').then((records) => {
-      const settings = records.find((record) => record.record_id === 'incident-creation-access')?.payload
-      if (active && Array.isArray(settings?.groupIds)) setIncidentCreationGroupIds(settings.groupIds.map(String))
+      const incidentCreationSettings = records.find((record) => record.record_id === 'incident-creation-access')?.payload
+      const spareCategorySettings = records.find((record) => record.record_id === 'contract-spare-categories')?.payload
+      if (active && Array.isArray(incidentCreationSettings?.groupIds)) setIncidentCreationGroupIds(incidentCreationSettings.groupIds.map(String))
+      if (active && Array.isArray(spareCategorySettings?.categories)) setContractSpareCategories(spareCategorySettings.categories.map(String))
     }).catch(() => {})
     return () => { active = false }
   }, [])
@@ -852,6 +856,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       ['notifications', notifications, (record) => record.id],
     ]
     collections.forEach(([resource, records, key]) => {
+      if (resource === 'contracts') return
       if (resource === 'product_assets' && !records.length && categoryProducts.length) return
       const nextRecords = records.map((record) => ({ record_id: String(key(record)), payload: record }))
       const previousRecords = persistedCollections.current[resource] || new Map()
@@ -1055,6 +1060,30 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
     setIncidentCreationGroupIds(normalizedGroupIds)
     await recordApi.bulkUpsert('system_settings', [{ record_id: 'incident-creation-access', payload: { groupIds: normalizedGroupIds } }])
   }
+  const saveContractSpareCategories = async (categories) => {
+    const normalizedCategories = [...new Set(categories.map((category) => category.trim()).filter(Boolean))].sort((first, second) => first.localeCompare(second))
+    setContractSpareCategories(normalizedCategories)
+    await recordApi.bulkUpsert('system_settings', [{ record_id: 'contract-spare-categories', payload: { categories: normalizedCategories } }])
+  }
+  const saveContract = async (contract) => {
+    const recordId = String(contract.id || contract.number)
+    const result = await contractMrlsApi.saveContract(recordId, contract)
+    const savedContract = { ...result.payload, id: contract.id }
+    setContracts((current) => current.some((entry) => entry.id === contract.id)
+      ? current.map((entry) => entry.id === contract.id ? savedContract : entry)
+      : [savedContract, ...current])
+    const persistedContracts = persistedCollections.current.contracts || new Map()
+    persistedContracts.set(recordId, JSON.stringify(savedContract))
+    persistedCollections.current.contracts = persistedContracts
+    return savedContract
+  }
+  const deleteContract = async (contractId) => {
+    const recordId = String(contractId)
+    await contractMrlsApi.deleteContract(recordId)
+    const persistedContracts = persistedCollections.current.contracts || new Map()
+    persistedContracts.delete(recordId)
+    persistedCollections.current.contracts = persistedContracts
+  }
   const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
   const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
   const createQueryAssignmentNotifications = (query, assignmentGroup) => createNotifications(queryAssignmentGroupNotifications(query, assignmentGroup, assignmentGroups, users))
@@ -1222,7 +1251,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Query Management': return <QueryManagementPage key={queryDrillId || 'default'} queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} initialQueryId={queryDrillId} onCreateAssignmentNotifications={createQueryAssignmentNotifications} canDelete={isAdministrator} />
       case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} contracts={contracts} incidents={incidents} productCategories={productCategories} currentUser={user} onAddCustomerContact={addCustomerContact} canDelete={isAdministrator} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} onCustomerRenamed={renameCustomerReferences} canManageCustomersAndContracts={canManageCustomersAndContracts} />
-      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} canManageCustomersAndContracts={canManageCustomersAndContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
+      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} customSpareCategories={contractSpareCategories} canManageSpareCategories={isAdministrator} onSaveSpareCategories={saveContractSpareCategories} onSaveContract={saveContract} onDeleteContract={deleteContract} canManageCustomersAndContracts={canManageCustomersAndContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
       case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
@@ -1233,7 +1262,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
       case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
       case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
-      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={isAdministrator} allowManualEntry={isAdministrator} manualEntryLabel="Manual MRLS entry" masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
         case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} />
       case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
       case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
@@ -1250,8 +1279,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
       case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} onGroupRenamed={renameAssignmentGroupReferences} />
       case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} onRepairExecutionRenamed={renameRepairExecutionReferences} />
-      case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
-      case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} contracts={contracts} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
+      case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
+      case 'Approval center: My Delegated Approvals': return <ApprovalCenterPage view="delegated" currentUser={user} users={users} incidents={incidents} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />
       case 'Process configuration': return <ProcessConfigurationPage assignmentGroups={assignmentGroups} repairExecutions={repairExecutions} processes={processes} setProcesses={setProcesses} onProcessRenamed={renameProcessReferences} />
       case 'Email settings': return <EmailSettingsPage assignmentGroups={assignmentGroups} users={users} data={applicationData} />
       case 'System settings': return <SystemSettingsPage assignmentGroups={assignmentGroups} incidentCreationGroupIds={incidentCreationGroupIds} onSaveIncidentCreationGroups={saveIncidentCreationGroups} />
