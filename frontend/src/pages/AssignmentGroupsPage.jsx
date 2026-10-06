@@ -82,7 +82,9 @@ export default function AssignmentGroupsPage({ groups, setGroups, users, onGroup
     setShowCreateForm(true)
   }
 
-  const deleteGroup = (id) => setGroups((current) => current.filter((group) => group.id !== id))
+  const deleteGroup = (id) => {
+    if (window.confirm('Delete this assignment group? This action cannot be undone.')) setGroups((current) => current.filter((group) => group.id !== id))
+  }
 
   const addMember = () => {
     if (!selectedAvailableUser) return

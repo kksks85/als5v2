@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '../data/spreadsheet'
 import {
   ArrowLeft, BarChart3, Bot, CalendarClock, Check, ChevronRight, Database,
   Download, FileSpreadsheet, FileText, Filter, LayoutList, LineChart, Palette,
@@ -112,14 +112,12 @@ export default function ReportingPage({ user, data, reports = [], onSaveReport, 
     setDefinition(savedDefinition)
     setNotice('Report saved and available in the report library and dashboard picker.')
   }
-  const exportReport = (format) => {
+  const exportReport = async (format) => {
     const fields = definition.selectedFields?.length ? definition.selectedFields : selectedTable.fields.slice(0, 5)
     const rows = result.rows.map((row) => Object.fromEntries(fields.map((field) => [field, row[field] ?? '--'])))
     const fileName = (definition.name || 'report').toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')
     if (format === 'Excel') {
-      const workbook = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Report data')
-      XLSX.writeFile(workbook, `${fileName}.xlsx`)
+      await downloadWorkbook(`${fileName}.xlsx`, 'Report data', rows)
     } else {
       const content = [fields.join(','), ...rows.map((row) => fields.map((field) => JSON.stringify(row[field])).join(','))].join('\n')
       const link = document.createElement('a')

@@ -702,7 +702,7 @@ export default function EmailSettingsPage({ assignmentGroups, users, data = {} }
                       <td>
                         <div className="action-group">
                           <button className="row-action" title="Edit" onClick={() => openOutboundRuleForm(r)}><Pencil size={14} /></button>
-                          <button className="row-action danger" title="Delete" onClick={async () => { await recordApi.remove('outbound_email_rules', r.id); setOutboundRules((current) => current.filter((rule) => rule.id !== r.id)) }}><Trash2 size={14} /></button>
+                          <button className="row-action danger" title="Delete" onClick={async () => { if (window.confirm(`Delete outbound rule "${r.name}"? This action cannot be undone.`)) { await recordApi.remove('outbound_email_rules', r.id); setOutboundRules((current) => current.filter((rule) => rule.id !== r.id)) } }}><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>

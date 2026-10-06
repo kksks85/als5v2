@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, GripVertical, LayoutDashboard, Plus, Send, Sparkles, Table2, TrendingUp, X } from 'lucide-react'
+import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, ExternalLink, FilePenLine, GripVertical, Inbox, LayoutDashboard, Plus, Send, Sparkles, Table2, TrendingUp, X } from 'lucide-react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
@@ -8,7 +8,7 @@ import { buildReportPromptGuide, createReportRows, getProductCategoryReportCatal
 const ReactGridLayout = WidthProvider(GridLayout)
 const palette = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#6366f1', '#0d9488', '#ca8a04', '#be185d']
 
-export default function OverviewPage({ user, reports, layout, data, selectedCustomer, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords, onCreateIncident }) {
+export default function OverviewPage({ user, reports, layout, data, selectedCustomer, showCsmTiles = false, onAddReport, onLayoutChange, onRemoveReport, onNavigate, onOpenReport, onOpenNlpReport, onOpenIncidents, onOpenRecords, onCreateIncident }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [nlpPanel, setNlpPanel] = useState(null)
   const dashboardUser = data.users?.find((member) => member.email === user.email) || user
@@ -27,15 +27,19 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     if (!selectedCustomer || selectedCustomer === 'All customers') return data.incidents
     return data.incidents.filter((i) => i.customer === selectedCustomer)
   }, [data.incidents, selectedCustomer])
-  const filteredContracts = useMemo(() => {
-    if (!selectedCustomer || selectedCustomer === 'All customers') return data.contracts
-    return data.contracts.filter((c) => c.customer === selectedCustomer)
-  }, [data.contracts, selectedCustomer])
-
   const totalIncidents = incidents.length
   const openIncidents = incidents.filter((i) => i.state !== 'Resolved' && i.state !== 'Closed').length
   const criticalIncidents = incidents.filter((i) => i.priority === 'Critical').length
-  const resolvedThisWeek = incidents.filter((i) => (i.state === 'Resolved' || i.state === 'Closed') && new Date(i.opened) > new Date(Date.now() - 7 * 86400000)).length
+  const highIncidents = incidents.filter((i) => i.priority === 'High').length
+  const closedIncidents = incidents.filter((i) => i.state === 'Closed').length
+  const qualityClaims = data.warrantyQualityClaims || []
+  const mailCorrespondence = data.mailCorrespondence || []
+  const openClaims = qualityClaims.filter((claim) => claim.status === 'Open').length
+  const pendingClaims = qualityClaims.filter((claim) => claim.status === 'Pending').length
+  const closedClaims = qualityClaims.filter((claim) => ['Closed', 'Settled'].includes(claim.status)).length
+  const mailIn = mailCorrespondence.filter((mail) => mail.label === 'Mail In').length
+  const mailDraftOut = mailCorrespondence.filter((mail) => mail.label === 'Mail Out' && String(mail.status || '').toLowerCase() === 'draft').length
+  const mailOut = mailCorrespondence.filter((mail) => mail.label === 'Mail Out').length
 
   return <section className="custom-dashboard">
     <header className="dashboard-header">
@@ -47,12 +51,22 @@ export default function OverviewPage({ user, reports, layout, data, selectedCust
     </header>
 
     <div className="dash-kpi-strip">
-      <article role="button" tabIndex={0} onClick={() => onOpenIncidents({})} title="View all incidents"><span className="dash-kpi-icon total"><Activity size={16} /></span><div><strong>{totalIncidents}</strong><small>Total incidents</small></div></article>
-      <article role="button" tabIndex={0} onClick={() => onOpenIncidents({ scope: 'Open' })} title="View open incidents"><span className="dash-kpi-icon open"><Clock size={16} /></span><div><strong>{openIncidents}</strong><small>Open</small></div></article>
-      <article role="button" tabIndex={0} className={criticalIncidents ? 'alert' : ''} onClick={() => onOpenIncidents({ priorityFilter: 'Critical' })} title="View critical incidents"><span className="dash-kpi-icon critical"><AlertTriangle size={16} /></span><div><strong>{criticalIncidents}</strong><small>Critical</small></div></article>
-      <article role="button" tabIndex={0} onClick={() => onOpenIncidents({ stateFilter: 'Resolved' })} title="View resolved incidents"><span className="dash-kpi-icon resolved"><CheckCircle2 size={16} /></span><div><strong>{resolvedThisWeek}</strong><small>Resolved (7d)</small></div></article>
-      <article role="button" tabIndex={0} onClick={() => onNavigate('Contracts')} title="View active contracts"><span className="dash-kpi-icon trend"><TrendingUp size={16} /></span><div><strong>{filteredContracts.filter((c) => c.status === 'Active').length}</strong><small>Active contracts</small></div></article>
+      <article role="button" tabIndex={0} className="incident-kpi" onClick={() => onOpenIncidents({})} title="View all incidents"><span className="dash-kpi-icon total"><Activity size={16} /></span><div><strong>{totalIncidents}</strong><small>Total incidents</small></div></article>
+      <article role="button" tabIndex={0} className="incident-kpi" onClick={() => onOpenIncidents({ scope: 'Open' })} title="View open incidents"><span className="dash-kpi-icon open"><Clock size={16} /></span><div><strong>{openIncidents}</strong><small>Open</small></div></article>
+      <article role="button" tabIndex={0} className={`incident-kpi ${criticalIncidents ? 'alert' : ''}`} onClick={() => onOpenIncidents({ priorityFilter: 'Critical' })} title="View critical incidents"><span className="dash-kpi-icon critical"><AlertTriangle size={16} /></span><div><strong>{criticalIncidents}</strong><small>Critical</small></div></article>
+      <article role="button" tabIndex={0} className="incident-kpi" onClick={() => onOpenIncidents({ priorityFilter: 'High' })} title="View high-priority incidents"><span className="dash-kpi-icon trend"><TrendingUp size={16} /></span><div><strong>{highIncidents}</strong><small>High</small></div></article>
+      <article role="button" tabIndex={0} className="incident-kpi" onClick={() => onOpenIncidents({ stateFilter: 'Closed' })} title="View closed incidents"><span className="dash-kpi-icon resolved"><CheckCircle2 size={16} /></span><div><strong>{closedIncidents}</strong><small>Closed</small></div></article>
     </div>
+
+    {showCsmTiles && <div className="dash-kpi-strip csm-kpi-strip">
+      <article role="button" tabIndex={0} className="claim-kpi" onClick={() => onNavigate('Warranty / Quality Claims')} title="View all quality claims"><span className="dash-kpi-icon total"><Activity size={16} /></span><div><strong>{qualityClaims.length}</strong><small>All quality claims</small></div></article>
+      <article role="button" tabIndex={0} className="claim-kpi" onClick={() => onNavigate('Warranty / Quality Claims')} title="View open quality claims"><span className="dash-kpi-icon open"><Clock size={16} /></span><div><strong>{openClaims}</strong><small>Open claims</small></div></article>
+      <article role="button" tabIndex={0} className="claim-kpi" onClick={() => onNavigate('Warranty / Quality Claims')} title="View pending quality claims"><span className="dash-kpi-icon trend"><AlertTriangle size={16} /></span><div><strong>{pendingClaims}</strong><small>Pending claims</small></div></article>
+      <article role="button" tabIndex={0} className="claim-kpi" onClick={() => onNavigate('Warranty / Quality Claims')} title="View closed quality claims"><span className="dash-kpi-icon resolved"><CheckCircle2 size={16} /></span><div><strong>{closedClaims}</strong><small>Closed</small></div></article>
+      <article role="button" tabIndex={0} className="mail-kpi" onClick={() => onNavigate('Mail correspondence')} title="View incoming mail"><span className="dash-kpi-icon total"><Inbox size={16} /></span><div><strong>{mailIn}</strong><small>Mail in</small></div></article>
+      <article role="button" tabIndex={0} className="mail-kpi" onClick={() => onNavigate('Mail correspondence')} title="View outgoing mail drafts"><span className="dash-kpi-icon trend"><FilePenLine size={16} /></span><div><strong>{mailDraftOut}</strong><small>Mail Draft (Out)</small></div></article>
+      <article role="button" tabIndex={0} className="mail-kpi" onClick={() => onNavigate('Mail correspondence')} title="View outgoing mail"><span className="dash-kpi-icon resolved"><Send size={16} /></span><div><strong>{mailOut}</strong><small>Mail Out</small></div></article>
+    </div>}
 
     {!dashboardReports.length ? <div className="dashboard-empty">
       <span><LayoutDashboard size={22} /></span>

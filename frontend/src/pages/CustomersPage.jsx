@@ -20,7 +20,7 @@ const columns = [
 
 const emptyForm = { name: '', number: '', address: '', primaryContact: { name: '', designation: '', email: '', phone: '', rank: '', site: '' }, contacts: [] }
 
-export default function CustomersPage({ customers, setCustomers, onCustomerRenamed }) {
+export default function CustomersPage({ customers, setCustomers, onCustomerRenamed, canManageCustomersAndContracts = false }) {
   const [showForm, setShowForm] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [editingCustomer, setEditingCustomer] = useState(null)
@@ -41,12 +41,14 @@ export default function CustomersPage({ customers, setCustomers, onCustomerRenam
   }
 
   const createCustomer = (form) => {
+    if (!canManageCustomersAndContracts) return
     const newCustomer = { id: Math.max(...customers.map(c => c.id), 0) + 1, ...form }
     setCustomers((current) => [newCustomer, ...current])
     setShowForm(false)
   }
 
   const updateCustomer = (form) => {
+    if (!canManageCustomersAndContracts) return
     const updatedCustomer = { ...form, id: editingCustomer.id }
     setCustomers((current) => current.map(c => c.id === editingCustomer.id ? updatedCustomer : c))
     if (editingCustomer.name !== updatedCustomer.name) onCustomerRenamed?.(editingCustomer, updatedCustomer)
@@ -54,6 +56,7 @@ export default function CustomersPage({ customers, setCustomers, onCustomerRenam
   }
 
   const deleteCustomer = (id) => {
+    if (!canManageCustomersAndContracts) return
     setCustomers((current) => current.filter(c => c.id !== id))
     setDeleteConfirm(null)
   }
@@ -69,17 +72,17 @@ export default function CustomersPage({ customers, setCustomers, onCustomerRenam
 
   if (showForm) return <CustomerForm onCancel={() => setShowForm(false)} onSubmit={createCustomer} />
   if (editingCustomer) return <CustomerForm customer={editingCustomer} onCancel={() => setEditingCustomer(null)} onSubmit={updateCustomer} />
-  if (selectedCustomer) return <CustomerDetail customer={selectedCustomer} onCancel={() => setSelectedCustomer(null)} onEdit={() => { setEditingCustomer(selectedCustomer); setSelectedCustomer(null) }} />
+  if (selectedCustomer) return <CustomerDetail customer={selectedCustomer} onCancel={() => setSelectedCustomer(null)} canManageCustomersAndContracts={canManageCustomersAndContracts} onEdit={() => { setEditingCustomer(selectedCustomer); setSelectedCustomer(null) }} />
   if (deleteConfirm) return <DeleteConfirmation customer={deleteConfirm} onConfirm={(id) => deleteCustomer(id)} onCancel={() => setDeleteConfirm(null)} />
 
   return (
     <section className="customer-list-page">
-      <div className="customer-list-head"><div className="customer-list-title"><h1>Customers</h1></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filtered.length}><Download size={15} /> Extract data</button><button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New customer</button></div></div>
+      <div className="customer-list-head"><div className="customer-list-title"><h1>Customers</h1></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filtered.length}><Download size={15} /> Extract data</button>{canManageCustomersAndContracts && <button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New customer</button>}</div></div>
       <div className="customer-command-bar">
         <div className="customer-search"><Search size={15} /><input aria-label="Search customers" placeholder="Search customers..." value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <span className="customer-list-count">{filtered.length ? `${filtered.length} customer${filtered.length === 1 ? '' : 's'}` : '0 results'}</span>
       </div>
-      <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => startColumnResize(event, column)} />}</th>)}</tr></thead><tbody>{filtered.map((customer) => <tr key={customer.id}><td>{customer.name}</td><td>{customer.number}</td><td className="truncate">{customer.address}</td><td>{customer.primaryContact?.name || '—'}</td><td>{customer.primaryContact?.phone || '—'}</td><td className="truncate">{customer.primaryContact?.email || '—'}</td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setSelectedCustomer(customer)}><Eye size={14} /></button><button className="icon-button" title="Edit" onClick={() => setEditingCustomer(customer)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(customer)}><Trash2 size={14} /></button></td></tr>)}{!filtered.length && <tr><td colSpan="7" className="empty-row">No customers match the search criteria.</td></tr>}</tbody></table></div></div>
+      <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => startColumnResize(event, column)} />}</th>)}</tr></thead><tbody>{filtered.map((customer) => <tr key={customer.id}><td>{customer.name}</td><td>{customer.number}</td><td className="truncate">{customer.address}</td><td>{customer.primaryContact?.name || '—'}</td><td>{customer.primaryContact?.phone || '—'}</td><td className="truncate">{customer.primaryContact?.email || '—'}</td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setSelectedCustomer(customer)}><Eye size={14} /></button>{canManageCustomersAndContracts && <><button className="icon-button" title="Edit" onClick={() => setEditingCustomer(customer)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(customer)}><Trash2 size={14} /></button></>}</td></tr>)}{!filtered.length && <tr><td colSpan="7" className="empty-row">No customers match the search criteria.</td></tr>}</tbody></table></div></div>
       <footer className="customer-pagination"><span>Total: {customers.length} customer{customers.length === 1 ? '' : 's'}</span></footer>
     </section>
   )
@@ -140,17 +143,17 @@ function CustomerForm({ customer, onCancel, onSubmit }) {
   </form>
 }
 
-function CustomerDetail({ customer, onCancel, onEdit }) {
+function CustomerDetail({ customer, onCancel, onEdit, canManageCustomersAndContracts }) {
   return <section className="customer-detail-page">
-    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Customers</button><div><h1>{customer.name}</h1><p className="customer-detail-subtitle">{customer.number} • {customer.address}</p></div></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></div></header>
+    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Customers</button><div><h1>{customer.name}</h1><p className="customer-detail-subtitle">{customer.number} • {customer.address}</p></div></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button>{canManageCustomersAndContracts && <button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button>}</div></header>
     <section className="customer-detail-sheet">
       <section className="detail-section"><h2>Customer Details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Customer Name</span><span className="detail-value">{customer.name}</span></div><div className="detail-field"><span className="detail-label">Customer Number</span><span className="detail-value">{customer.number}</span></div><div className="detail-field full-width"><span className="detail-label">Primary Address</span><span className="detail-value">{customer.address}</span></div></div></section>
       
       <section className="detail-section"><h2>Primary Contact</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Name</span><span className="detail-value">{customer.primaryContact?.name || '—'}</span></div><div className="detail-field"><span className="detail-label">Designation</span><span className="detail-value">{customer.primaryContact?.designation || '—'}</span></div><div className="detail-field"><span className="detail-label">Email</span><span className="detail-value">{customer.primaryContact?.email || '—'}</span></div><div className="detail-field"><span className="detail-label">Phone</span><span className="detail-value">{customer.primaryContact?.phone || '—'}</span></div><div className="detail-field"><span className="detail-label">Rank</span><span className="detail-value">{customer.primaryContact?.rank || '—'}</span></div><div className="detail-field"><span className="detail-label">Site</span><span className="detail-value">{customer.primaryContact?.site || '—'}</span></div></div></section>
 
-      <section className="detail-section"><h2>Additional Contacts ({customer.contacts?.length || 0})</h2>{customer.contacts && customer.contacts.length > 0 ? <div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Contact Name</th><th>Designation</th><th>Phone</th><th>Email</th><th>Site</th><th>Address</th></tr></thead><tbody>{customer.contacts.map((contact) => <tr key={contact.id}><td>{contact.name}</td><td>{contact.designation}</td><td>{contact.phone}</td><td className="truncate">{contact.email}</td><td>{contact.site}</td><td className="truncate">{contact.address}</td></tr>)}</tbody></table></div> : <p className="empty-contacts">No additional contacts configured.</p>}</section>
+      <section className="detail-section"><h2>Additional Contacts ({customer.contacts?.length || 0})</h2>{customer.contacts && customer.contacts.length > 0 ? <div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Rank</th><th>Contact Name</th><th>Designation</th><th>Phone</th><th>Email</th><th>Site</th><th>Address</th></tr></thead><tbody>{customer.contacts.map((contact) => <tr key={contact.id}><td>{contact.rank || '—'}</td><td>{contact.name}</td><td>{contact.designation}</td><td>{contact.phone}</td><td className="truncate">{contact.email}</td><td>{contact.site}</td><td className="truncate">{contact.address}</td></tr>)}</tbody></table></div> : <p className="empty-contacts">No additional contacts configured.</p>}</section>
     </section>
-    <footer className="customer-detail-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></footer>
+    <footer className="customer-detail-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button>{canManageCustomersAndContracts && <button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button>}</footer>
   </section>
 }
 

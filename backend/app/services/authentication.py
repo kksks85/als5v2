@@ -70,11 +70,18 @@ def find_local_user(database: Session, username: str) -> UserRecord | None:
     normalized = normalize_username(username)
     for user in database.scalars(select(UserRecord)).all():
         metadata = auth_metadata(user.payload)
-        candidate = metadata.get("username") or user.payload.get("username") or user.payload.get("email")
-        candidate_value = normalize_username(str(candidate)) if candidate else ""
-        email_local_part = candidate_value.split("@", 1)[0] if "@" in candidate_value else ""
-        if candidate_value == normalized or email_local_part == normalized:
-            return user
+        candidates = (
+            metadata.get("username"),
+            user.payload.get("username"),
+            user.payload.get("employeeId"),
+            user.payload.get("email"),
+            user.record_id,
+        )
+        for candidate in candidates:
+            candidate_value = normalize_username(str(candidate)) if candidate else ""
+            email_local_part = candidate_value.split("@", 1)[0] if "@" in candidate_value else ""
+            if candidate_value == normalized or email_local_part == normalized:
+                return user
     return None
 
 
@@ -104,8 +111,8 @@ def ensure_user_credentials(database: Session, user: UserRecord) -> dict:
 def local_profile(user: UserRecord) -> DirectoryProfile:
     payload = public_user_payload(user.payload)
     return DirectoryProfile(
-        username=str(payload.get("username") or payload.get("email") or user.record_id),
-        display_name=str(payload.get("name") or payload.get("displayName") or payload.get("username") or user.record_id),
+        username=str(payload.get("username") or payload.get("employeeId") or payload.get("email") or user.record_id),
+        display_name=str(payload.get("name") or payload.get("displayName") or payload.get("username") or payload.get("employeeId") or user.record_id),
         email=str(payload.get("email") or ""),
         groups=[],
     )

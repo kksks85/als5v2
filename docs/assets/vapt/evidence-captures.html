@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ALS50 VAPT Evidence Captures</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; padding: 42px; background: #edf2f6; color: #192a39; font: 16px/1.5 Arial, sans-serif; }
+    .capture { width: 1120px; min-height: 740px; margin: 0 auto 42px; padding: 42px; background: #fff; box-sizing: border-box; box-shadow: 0 4px 18px #263d5033; }
+    .bar { margin: -42px -42px 30px; padding: 14px 42px; color: #dcecf5; background: #123653; font: 700 12px Consolas, monospace; }
+    h1 { margin: 0 0 8px; color: #123653; font-size: 28px; }
+    p { max-width: 920px; }
+    .meta { color: #617688; font-size: 13px; }
+    pre { margin: 24px 0; padding: 24px; overflow: hidden; border: 1px solid #c8d7e2; border-radius: 4px; background: #10212f; color: #d9f1ff; font: 15px/1.6 Consolas, monospace; white-space: pre-wrap; }
+    .ok { color: #77d6ab; font-weight: bold; }
+    .warn { color: #ffd27d; font-weight: bold; }
+    .redact { color: #92a6b5; }
+    code { font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <section class="capture" id="runtime-api">
+    <div class="bar">ALS50 VAPT | Evidence Capture 01 | Runtime API Authorization Check</div>
+    <h1>Anonymous API Request Results</h1>
+    <p class="meta">Captured 2026-09-11 | Target: 127.0.0.1:8001 | Method: GET | Authentication: no cookie, no Authorization header | Response bodies discarded to avoid retaining operational data.</p>
+    <pre>PS C:\Users\amitadmin\als5v2&gt; curl.exe -sS -D - -o NUL http://127.0.0.1:8001/api/v1/records/incidents
+HTTP/1.1 <span class="ok">200 OK</span>
+server: uvicorn
+content-type: application/json
+content-length: 11668219
+
+PS C:\Users\amitadmin\als5v2&gt; curl.exe -sS -D - -o NUL http://127.0.0.1:8001/api/v1/records/users
+HTTP/1.1 <span class="ok">200 OK</span>
+server: uvicorn
+content-type: application/json
+content-length: 21315
+
+<span class="redact">Response bodies intentionally discarded. The capture proves response status and metadata only.</span></pre>
+    <p><b>Assessment interpretation:</b> Both sensitive collections were accessible without an authenticated session. This is the runtime evidence supporting finding SEC-001.</p>
+  </section>
+
+  <section class="capture" id="source-routes">
+    <div class="bar">ALS50 VAPT | Evidence Capture 02 | Server-Side Route Review</div>
+    <h1>Generic Records Router Excerpt</h1>
+    <p class="meta">Source: backend/app/api/v1/records.py | Reviewed 2026-09-11 | Excerpt reproduced from the assessed working tree.</p>
+    <pre>router = APIRouter(prefix="/records", tags=["records"])
+
+@router.get("/{resource}")
+def list_records(resource: str, database: Session = Depends(get_db)) -&gt; dict[str, list[dict[str, Any]]]:
+    validate_resource(resource)
+    ...
+    return {"items": [{"record_id": record.record_id, "payload": ...} for record in records]}
+
+@router.put("/{resource}/{record_id}")
+def upsert_record(resource: str, record_id: str, record: RecordInput, database: Session = Depends(get_db)) -&gt; dict[str, str]:
+    validate_resource(resource)
+    ...
+
+@router.delete("/{resource}/{record_id}")
+def delete_record(resource: str, record_id: str, database: Session = Depends(get_db)) -&gt; dict[str, str]:
+    validate_resource(resource)
+    ...</pre>
+    <p><b>Assessment interpretation:</b> The excerpt contains only the database dependency; no session validation or authorization dependency is declared on list, write, or delete handlers. No write request was executed.</p>
+  </section>
+
+  <section class="capture" id="headers-dependencies">
+    <div class="bar">ALS50 VAPT | Evidence Capture 03 | Header and Dependency Checks</div>
+    <h1>Controlled Header and SCA Results</h1>
+    <p class="meta">Captured 2026-09-11 | No application state was modified.</p>
+    <pre>PS C:\Users\amitadmin\als5v2&gt; curl.exe -sS -D - -o NUL http://127.0.0.1:8001/api/v1/health
+HTTP/1.1 <span class="ok">200 OK</span>
+server: uvicorn
+content-type: application/json
+content-length: 62
+
+<span class="warn">Not present in observed response:</span> Content-Security-Policy, Strict-Transport-Security,
+X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
+
+PS C:\Users\amitadmin\als5v2\frontend&gt; npm audit --omit=dev --json
+<span class="warn">vulnerabilities: 34 total</span>
+critical: 1 | high: 2 | moderate: 31 | low: 0 | info: 0
+affected direct packages include: jspdf (critical), xlsx (high)
+affected transitive package family includes: @tiptap/core (high)</pre>
+    <p><b>Assessment interpretation:</b> The header observation supports SEC-003. Package-manager advisory evidence supports SEC-002; application-specific exploitability was not tested and is therefore classified as potential.</p>
+  </section>
+</body>
+</html>

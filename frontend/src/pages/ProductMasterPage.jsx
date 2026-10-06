@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '../data/spreadsheet'
 import { ArrowLeft, CheckCircle2, ChevronDown, Download, Edit2, Eye, FileSpreadsheet, Search, Settings2, Trash2, Upload, X } from 'lucide-react'
 import { normalizePartNumber, parseConfigurationWorkbook, parseRouteCardWorkbook, reconcileProductImport } from '../data/productImport'
 
@@ -126,7 +126,7 @@ export default function ProductMasterPage({ products, setProducts, canManageInve
     if (!file) return
     setImportMessage('')
     try {
-      setWorkbook(parser(await file.arrayBuffer(), file.name))
+      setWorkbook(await parser(await file.arrayBuffer(), file.name))
     } catch {
       setImportMessage(`${label} could not be read. Select a valid Excel workbook and try again.`)
     }
@@ -156,19 +156,16 @@ export default function ProductMasterPage({ products, setProducts, canManageInve
     setActiveTab('products')
   }
 
-  const exportTemplate = () => {
-    const worksheet = XLSX.utils.json_to_sheet([Object.fromEntries(productColumns.map(({ label }) => [label, '']))])
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Product Master')
-    XLSX.writeFile(workbook, 'als50-product-master-template.xlsx')
-  }
+  const exportTemplate = () => downloadWorkbook('als50-product-master-template.xlsx', 'Product Master', [Object.fromEntries(productColumns.map(({ label }) => [label, '']))])
 
   const saveProduct = (nextProduct) => {
     setProducts((current) => current.map((product) => product === editingProduct ? nextProduct : product))
     setEditingProduct(null)
   }
 
-  const deleteProduct = (product) => setProducts((current) => current.filter((item) => item !== product))
+  const deleteProduct = (product) => {
+    if (window.confirm(`Delete product ${product.product_serial_number || product.productRecordId || ''}? This action cannot be undone.`)) setProducts((current) => current.filter((item) => item !== product))
+  }
 
   if (selectedProduct) return <ProductRecordView product={selectedProduct} canManageInventory={canManageInventory} onBack={() => setSelectedProduct(null)} onEdit={() => { setEditingProduct(selectedProduct); setSelectedProduct(null) }} />
   if (editingProduct) return <ProductRecordEditor product={editingProduct} onBack={() => setEditingProduct(null)} onSave={saveProduct} />

@@ -48,13 +48,13 @@ const workspaceNav = [
   { key: 'Customers', label: 'Customers', icon: Building2 },
   { key: 'Contracts', label: 'Contracts', icon: FileText },
   { key: 'Sub-contracts', label: 'Sub-contracts', icon: FileText },
+  { key: 'Approval center', label: 'Approval center', icon: ShieldCheck },
   { key: 'Inventory Master', label: 'Inventory Master', icon: Package },
   { key: 'Product categories', label: 'Product categories', icon: Package },
   { key: 'Knowledge management', label: 'Knowledge management', icon: BookOpen },
   { key: 'Mail correspondence', label: 'Mail Correspondence', icon: Mail },
   { key: 'My Calendar', label: 'My Calendar', icon: CalendarDays, csmOnly: true },
   { key: 'Reporting', label: 'Reporting', icon: BarChart3 },
-  { key: 'Approval center', label: 'Approval center', icon: ShieldCheck },
 ]
 
 const standardWorkspaceKeys = new Set([
@@ -197,6 +197,25 @@ const assignmentGroupNotifications = (incident, assignmentGroup, groups, users) 
       createdAt,
     }))
 }
+const queryAssignmentGroupNotifications = (query, assignmentGroup, groups, users) => {
+  const group = groups.find((entry) => entry.active && entry.name === assignmentGroup)
+  const createdAt = new Date().toISOString()
+  const memberIds = new Set((group?.memberIds || []).map(String))
+  return users
+    .filter((user) => user.status === 'Active' && memberIds.has(String(user.id)))
+    .map((user) => ({
+      id: `query-assignment-${query.id}-${assignmentGroup}-${user.id}-${Date.now()}`,
+      type: 'query-assignment',
+      title: 'Customer query assigned to your group',
+      queryId: query.id,
+      assignmentGroup,
+      workNotes: `${query.id} has been assigned to ${assignmentGroup}.`,
+      recipientUserId: user.id,
+      recipientName: user.name,
+      readByUserIds: [],
+      createdAt,
+    }))
+}
 
 const reseedCustomerContacts = (customers) => {
   if (localStorage.getItem(customerContactMigrationKey)) return customers
@@ -323,7 +342,7 @@ function LoginPage({ onLogin }) {
           <h2>Username sign-in</h2>
           <p className="login-desc">Sign in with your username and password.</p>
           <form onSubmit={handleSubmit}>
-            <div className="login-field"><label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" required /></label><label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" className="password-visibility-button" onClick={revealPassword} aria-label="Show password for 3 seconds" title="Show password for 3 seconds">{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label></div>
+            <div className="login-field"><label>Username or employee ID<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username or employee ID" required /></label><label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" className="password-visibility-button" onClick={revealPassword} aria-label="Show password for 3 seconds" title="Show password for 3 seconds">{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label></div>
             <div className="login-actions"><button type="submit" className="login-btn primary" disabled={submitting || !username.trim() || !password}><LogIn size={17} /> {submitting ? 'Signing in...' : 'Sign in'}</button></div>
           </form>
           {loginError && <p className="login-desc" role="alert">{loginError}</p>}
@@ -511,8 +530,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [impersonationSearch, setImpersonationSearch] = useState('')
   const [impersonationCandidate, setImpersonationCandidate] = useState(null)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
-  const [inventoryMasterNavigationOpen, setInventoryMasterNavigationOpen] = useState(true)
-  const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(true)
+  const [inventoryMasterNavigationOpen, setInventoryMasterNavigationOpen] = useState(false)
+  const [categoryNavigationOpen, setCategoryNavigationOpen] = useState(false)
   const [incidentNavigationOpen, setIncidentNavigationOpen] = useState(true)
   const [approvalCenterOpen, setApprovalCenterOpen] = useState(true)
   const [selectedCustomer, setSelectedCustomer] = useState('All customers')
@@ -520,6 +539,8 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const [customers, setCustomers] = useState(initialCustomers)
   const [incidents, setIncidents] = useState([])
   const [queries, setQueries] = useState([])
+  const [queryDrillId, setQueryDrillId] = useState('')
+  const [savedIncidentQueries, setSavedIncidentQueries] = useState(() => JSON.parse(localStorage.getItem('als50-saved-incident-queries') || '[]'))
   const [warrantyQualityClaims, setWarrantyQualityClaims] = useState([])
   const [contracts, setContracts] = useState(initialContracts)
   const [subcontracts, setSubcontracts] = useState([])
@@ -1025,7 +1046,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const addReportToDashboard = (reportId) => setDashboardLayout((current) => current.some((item) => item.i === reportId) ? current : [...current, { i: reportId, x: 0, y: Infinity, w: 6, h: 4, minW: 3, minH: 3 }])
   const removeReportFromDashboard = (reportId) => setDashboardLayout((current) => current.filter((item) => item.i !== reportId))
 
-  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, subcontracts, mailCorrespondence, calendarEvents, repairExecutions, processes, notifications, queries }
+  const applicationData = { customers, incidents, contracts, products: categoryProducts, productAssets, knowledgeDocuments, users, assignmentGroups, subcontracts, warrantyQualityClaims, mailCorrespondence, calendarEvents, repairExecutions, processes, notifications, queries }
   const productCategories = getProductCategories(categoryProducts)
   const currentUserRecord = users.find((member) => member.email === user.email) || user
   const isAdministrator = String(currentUserRecord.role || user.role || '').toLowerCase() === 'administrator'
@@ -1036,6 +1057,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   }
   const createNotifications = (nextNotifications) => setNotifications((current) => sortNotificationsNewestFirst([...current, ...nextNotifications.filter((notification) => !current.some((entry) => entry.id === notification.id))]))
   const createAssignmentNotifications = (incident, assignmentGroup) => createNotifications(assignmentGroupNotifications(incident, assignmentGroup, assignmentGroups, users))
+  const createQueryAssignmentNotifications = (query, assignmentGroup) => createNotifications(queryAssignmentGroupNotifications(query, assignmentGroup, assignmentGroups, users))
   const resolveGroupApproval = async (incidentId, decision, reason) => {
     const incident = incidents.find((entry) => entry.id === incidentId)
     const approval = incident?.groupApproval
@@ -1131,6 +1153,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const canCreateIncidents = isAdministrator
     || currentUserGroupNames.includes('Customer Support Management Group')
   const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
+  const canManageCustomersAndContracts = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Admin Team')
   const hasWarrantyQualityClaimsAccess = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Advisory Group')
   const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
   const canViewCsmReports = isAdministrator || isCustomerSupportManagementMember
@@ -1180,6 +1203,10 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       setIncidentDrill({ incidentIds: [notification.incidentId], selectedIncidentId: notification.incidentId, activeTab: 'Notes', navigationId: Date.now() })
       setActivePage('Incidents')
     }
+    if (notification.queryId) {
+      setQueryDrillId(notification.queryId)
+      setActivePage('Query Management')
+    }
   }
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
@@ -1187,15 +1214,15 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
-      case 'Overview': return <OverviewPage user={user} reports={dashboardReports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
+      case 'Overview': return <OverviewPage user={user} reports={dashboardReports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} showCsmTiles={isCustomerSupportManagementMember} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
         if (source === 'Incidents') { setIncidentDrill({ incidentIds: recordIds }); setActivePage('Incidents'); return }
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
-      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} canCreateIncidents={canCreateIncidents} />
-      case 'Query Management': return <QueryManagementPage queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} />
-      case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} incidents={incidents} productCategories={productCategories} currentUser={user} />
-      case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} onCustomerRenamed={renameCustomerReferences} />
-      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
+      case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} savedQueries={savedIncidentQueries} onSaveQuery={(query) => setSavedIncidentQueries((current) => { const next = [...current.filter((entry) => entry.name !== query.name), query]; localStorage.setItem('als50-saved-incident-queries', JSON.stringify(next)); return next })} canCreateIncidents={canCreateIncidents} canDelete={isAdministrator} />
+      case 'Query Management': return <QueryManagementPage key={queryDrillId || 'default'} queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} initialQueryId={queryDrillId} onCreateAssignmentNotifications={createQueryAssignmentNotifications} canDelete={isAdministrator} />
+      case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} contracts={contracts} incidents={incidents} productCategories={productCategories} currentUser={user} onAddCustomerContact={addCustomerContact} canDelete={isAdministrator} />
+      case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} onCustomerRenamed={renameCustomerReferences} canManageCustomersAndContracts={canManageCustomersAndContracts} />
+      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} canManageCustomersAndContracts={canManageCustomersAndContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
       case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
       case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
@@ -1211,7 +1238,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
       case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
       case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
       case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
-      case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} />
+      case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} canDelete={isAdministrator} canRetire={isAdministrator || isCustomerSupportManagementMember} />
       case 'Mail correspondence': return <MailCorrespondencePage correspondence={mailCorrespondence} setCorrespondence={setMailCorrespondence} users={users} currentUser={user} />
       case 'My Calendar': return <MyCalendarPage
         incidents={incidents.filter((incident) => currentUserGroupNames.includes(incident.assignmentGroup || incident.group))}
@@ -1249,7 +1276,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
             const displayCount = key === 'Incidents' ? visibleIncidentCount : count
             if (key === 'Incidents') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage === 'Incidents' ? 'active' : ''}`} aria-expanded={incidentNavigationOpen} onClick={() => setIncidentNavigationOpen((open) => !open)}><Icon size={18} /><span>{label}</span>{displayCount && <b>{displayCount}</b>}<ChevronDown size={14} className={incidentNavigationOpen ? 'expanded' : ''} /></button>
-              {incidentNavigationOpen && <div className="nav-submenu">{[{ label: 'Assigned to my group', scope: 'Assigned to my group' }, { label: 'Assigned to me', scope: 'Assigned to me' }].map((item) => <button key={item.scope} className={activePage === 'Incidents' && incidentDrill?.scope === item.scope ? 'active' : ''} onClick={() => { setIncidentDrill({ scope: item.scope, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{item.label}</span></button>)}<button className={activePage === 'Component repairs' ? 'active' : ''} onClick={() => { setActivePage('Component repairs'); setMobileNavigationOpen(false) }}><span>Components sent for repair</span></button></div>}
+              {incidentNavigationOpen && <div className="nav-submenu">{[{ label: 'All incidents', scope: 'All', stateFilter: 'All' }, { label: 'Assigned to my group', scope: 'Assigned to my group', stateFilter: 'All' }, { label: 'Assigned to me', scope: 'Assigned to me' }].map((item) => <button key={item.scope} className={activePage === 'Incidents' && incidentDrill?.scope === item.scope ? 'active' : ''} onClick={() => { setIncidentDrill({ scope: item.scope, stateFilter: item.stateFilter, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{item.label}</span></button>)}{savedIncidentQueries.length > 0 && <div className="nav-saved-queries"><span>Saved queries</span>{savedIncidentQueries.map((query) => <button key={query.id} className={activePage === 'Incidents' && incidentDrill?.savedQuery?.id === query.id ? 'active' : ''} onClick={() => { setIncidentDrill({ savedQuery: query, navigationId: Date.now() }); setActivePage('Incidents'); setMobileNavigationOpen(false) }}><span>{query.name}</span></button>)}</div>}<button className={activePage === 'Component repairs' ? 'active' : ''} onClick={() => { setActivePage('Component repairs'); setMobileNavigationOpen(false) }}><span>Components sent for repair</span></button></div>}
             </div>
             if (key === 'Approval center') return <div className="nav-group" key={key}>
               <button className={`nav-item ${activePage.startsWith('Approval center:') ? 'active' : ''}`} aria-expanded={approvalCenterOpen} onClick={() => setApprovalCenterOpen((open) => !open)}><Icon size={18} /><span>{label}</span><ChevronDown size={14} className={approvalCenterOpen ? 'expanded' : ''} /></button>
@@ -1332,21 +1359,6 @@ export default function App() {
   const authenticatedUserRef = useRef(authenticatedUser)
   const lastSessionRenewalRef = useRef(0)
   const sessionRenewalInFlightRef = useRef(false)
-  const [loginUsers, setLoginUsers] = useState([])
-  const [loginAssignmentGroups, setLoginAssignmentGroups] = useState([])
-  const [loginDirectoryReady, setLoginDirectoryReady] = useState(false)
-  useEffect(() => {
-    let active = true
-    Promise.all([recordApi.list('users'), recordApi.list('assignment_groups')])
-      .then(([storedUsers, storedGroups]) => {
-        if (!active) return
-        setLoginUsers(storedUsers.map((record) => record.payload))
-        setLoginAssignmentGroups(storedGroups.map((record) => record.payload))
-        setLoginDirectoryReady(true)
-      })
-      .catch((error) => console.warn('Unable to load demo login identities.', error))
-    return () => { active = false }
-  }, [])
   useEffect(() => {
     userRef.current = user
   }, [user])
@@ -1407,7 +1419,7 @@ export default function App() {
   }
   const canImpersonate = String(authenticatedUser?.role || '').toLowerCase() === 'administrator'
   const impersonatingUser = Boolean(authenticatedUser && user && authenticatedUser.email !== user.email)
-  if (!user) return <LoginPage onLogin={login} users={loginUsers} assignmentGroups={loginAssignmentGroups} directoryReady={loginDirectoryReady} />
+  if (!user) return <LoginPage onLogin={login} />
   if (authenticatedUser?.session?.must_change_password) return <PasswordChangePage onComplete={() => { sessionStorage.removeItem(sessionContextStorageKey); setUser(null); setAuthenticatedUser(null) }} onLogout={logout} />
   return <Dashboard key={user.email} user={user} onLogout={logout} canImpersonate={canImpersonate} impersonatingUser={impersonatingUser} onImpersonate={impersonate} onStopImpersonating={stopImpersonating} />
 }

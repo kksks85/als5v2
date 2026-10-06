@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '../data/spreadsheet'
 import { ArrowLeft, CheckCircle2, ChevronDown, Download, Edit2, Eye, FileSpreadsheet, Plus, Search, Settings2, Trash2, Upload, X } from 'lucide-react'
 import { parseProductMasterWorkbook } from '../data/productImport'
 
@@ -48,12 +48,7 @@ export default function ProductMasterMcsPage({ records, setRecords, canManageInv
   const visibleRecords = filteredRecords.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize)
   const toggleColumn = (key) => setVisibleColumns((current) => current.includes(key) ? current.filter((column) => column !== key) : [...current, key])
 
-  const exportTemplate = () => {
-    const worksheet = XLSX.utils.json_to_sheet([Object.fromEntries(mcsColumns.map(({ label }) => [label, '']))])
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Product Master MCS')
-    XLSX.writeFile(workbook, 'als50-product-master-mcs-template.xlsx')
-  }
+  const exportTemplate = () => downloadWorkbook('als50-product-master-mcs-template.xlsx', 'Product Master MCS', [Object.fromEntries(mcsColumns.map(({ label }) => [label, '']))])
   const saveRecord = (nextRecord) => {
     setRecords((current) => current.some((record) => record.id === nextRecord.id)
       ? current.map((record) => record.id === nextRecord.id ? nextRecord : record)
@@ -66,7 +61,7 @@ export default function ProductMasterMcsPage({ records, setRecords, canManageInv
     if (!file) return
     setImportMessage('')
     try {
-      setImportPreview(parseProductMasterWorkbook(await file.arrayBuffer(), mcsColumns, 'mcs', file.name))
+      setImportPreview(await parseProductMasterWorkbook(await file.arrayBuffer(), mcsColumns, 'mcs', file.name))
     } catch {
       setImportPreview(null)
       setImportMessage('The workbook could not be read. Select a valid Excel workbook and try again.')
@@ -107,7 +102,7 @@ export default function ProductMasterMcsPage({ records, setRecords, canManageInv
       </div>
       {importPreview && <section className="import-step-card product-master-import-review"><div className="import-step-heading"><span><FileSpreadsheet size={14} /></span><div><h2>Workbook review</h2><p>{importPreview.fileName}: {importPreview.rows.length} valid row(s), {importPreview.invalidRows.length} invalid row(s), {importPreview.skippedSheets.length} skipped sheet(s).</p></div></div>{importPreview.invalidRows.length > 0 && <p className="import-review-note error">Rows must include: {mcsColumns.filter((column) => column.required).map((column) => column.label).join(', ')}.</p>}<div className="import-actions-row"><button className="compact-button primary" disabled={!importPreview.rows.length || importPreview.invalidRows.length > 0} onClick={commitImport}><Upload size={15} /> Import {importPreview.rows.length} row(s)</button></div></section>}
       {importMessage && <div className={`import-message ${importMessage.includes('imported') ? 'success' : ''}`}><CheckCircle2 size={15} /> {importMessage}</div>}
-      <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleRecords.map((record) => <tr key={record.id}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedRecord(record)}>{record[key]}</button> : record[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View material" onClick={() => setSelectedRecord(record)}><Eye size={15} /></button>{canManageInventory && <><button className="action-btn" title="Edit material" onClick={() => setEditingRecord(record)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete material" onClick={() => setRecords((current) => current.filter((item) => item.id !== record.id))}><Trash2 size={15} /></button></>}</div></td></tr>)}{!filteredRecords.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No MCS materials match the current search.</td></tr>}</tbody></table></div></div>
+      <div className="incident-table-frame"><div className="incident-table-scroll"><table className="incident-table product-register-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: column.width }} />)}<col style={{ width: 104 }} /></colgroup><thead><tr>{activeColumns.map(({ key, label }) => <th key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{visibleRecords.map((record) => <tr key={record.id}>{activeColumns.map(({ key }) => <td key={key}>{key === 'product_serial_number' ? <button className="incident-number" onClick={() => setSelectedRecord(record)}>{record[key]}</button> : record[key] || <span className="table-empty">--</span>}</td>)}<td className="row-actions-cell"><div className="row-actions"><button className="action-btn" title="View material" onClick={() => setSelectedRecord(record)}><Eye size={15} /></button>{canManageInventory && <><button className="action-btn" title="Edit material" onClick={() => setEditingRecord(record)}><Edit2 size={15} /></button><button className="action-btn delete" title="Delete material" onClick={() => { if (window.confirm(`Delete material ${record.product_serial_number || record.id}? This action cannot be undone.`)) setRecords((current) => current.filter((item) => item.id !== record.id)) }}><Trash2 size={15} /></button></>}</div></td></tr>)}{!filteredRecords.length && <tr><td colSpan={Math.max(activeColumns.length + 1, 1)} className="empty-row">No MCS materials match the current search.</td></tr>}</tbody></table></div></div>
       <footer className="incident-pagination"><span>Showing {filteredRecords.length ? `${(Math.min(page, totalPages) - 1) * pageSize + 1}-${Math.min(Math.min(page, totalPages) * pageSize, filteredRecords.length)} of ${filteredRecords.length}` : '0'} record{filteredRecords.length === 1 ? '' : 's'}</span><div className="incident-page-controls"><button className="compact-button secondary" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button><span>Page {Math.min(page, totalPages)} of {totalPages}</span><button className="compact-button secondary" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button></div></footer>
     </section>
   </>

@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react'
-import { ArrowLeft, Download, Eye, Edit2, Trash2, Plus, Search } from 'lucide-react'
+import { ArrowLeft, ArrowUpDown, Download, Eye, Edit2, Trash2, Plus, Settings } from 'lucide-react'
 
 const formatDate = (date) => date ? new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
-const deliverableProducts = ['Loitering Munition (LM)', 'Mission Control Station (MCS)', 'Ground Data Terminal (GDT)', 'MAST', 'Simulator', 'Tactical Mobility Vehicle (TMV)', 'Rapid Deployment Vehicle (RDV)', 'Batteries', 'Warhead', 'MRLS', 'Tools', 'SMT / STE', 'Ground Support Equipment (GSE)']
+const deliverableProducts = ['Loitering Munition (LM)', 'Mission Control Station (MCS)', 'Ground Data Terminal (GDT)', 'MAST', 'Simulator', 'Tactical Mobility Vehicle (TMV)', 'Rapid Deployment Vehicle (RDV)', 'Batteries', 'Warhead', 'MRLS', 'Tools', 'SMT / STE', 'Ground Support Equipment (GSE)', 'RDV-1', 'RDV-2', 'Aircraft Batteries', 'GDT Batteries', 'SAM', 'Others']
 const warrantyExpiryFromJri = (jriDate) => {
   if (!jriDate) return ''
   const [year, month, day] = jriDate.split('-').map(Number)
@@ -316,8 +316,34 @@ const columns = [
   { key: 'warranty', label: 'Warranty', width: '140px', minWidth: '120px' },
   { key: 'coverage', label: 'Coverage', width: '100px', minWidth: '100px' },
   { key: 'status', label: 'Status', width: '100px', minWidth: '90px' },
+  { key: 'system', label: 'System', width: '140px', minWidth: '110px' },
+  { key: 'incidentPrefix', label: 'Incident Prefix', width: '120px', minWidth: '100px' },
+  { key: 'minorService', label: 'Minor Service', width: '120px', minWidth: '100px' },
+  { key: 'majorService', label: 'Major Service', width: '120px', minWidth: '100px' },
+  { key: 'minorSchedule', label: 'Minor Schedule', width: '180px', minWidth: '140px' },
+  { key: 'majorSchedule', label: 'Major Schedule', width: '180px', minWidth: '140px' },
+  { key: 'warrantyIncluded', label: 'Warranty Included', width: '130px', minWidth: '110px' },
+  { key: 'maintenance', label: 'Maintenance', width: '115px', minWidth: '100px' },
+  { key: 'unscheduled', label: 'Unscheduled Service', width: '145px', minWidth: '120px' },
+  { key: 'calibration', label: 'Calibration', width: '105px', minWidth: '90px' },
+  { key: 'softwareUpgrade', label: 'Software Upgrade', width: '135px', minWidth: '110px' },
+  { key: 'refresherTraining', label: 'Refresher Training', width: '140px', minWidth: '120px' },
+  { key: 'manuals', label: 'Manuals & Versions', width: '180px', minWidth: '140px' },
+  { key: 'visitRecord', label: 'Visit Record', width: '160px', minWidth: '130px' },
+  { key: 'deliverables', label: 'Deliverables', width: '190px', minWidth: '150px' },
+  { key: 'spares', label: 'MRLS', width: '190px', minWidth: '150px' },
+  { key: 'subcontracts', label: 'Subcontracts', width: '180px', minWidth: '140px' },
   { key: 'actions', label: 'Actions', width: '100px', minWidth: '100px' }
 ]
+
+const contractListValue = (contract, key) => {
+  if (key === 'coverage') return (contract.coverage || []).join(' ')
+  if (key === 'deliverables') return (contract.deliverables || []).map((item) => `${item.product === 'Others' ? item.otherDetails || 'Others' : item.product || ''} ${item.quantity || ''}`).join(', ')
+  if (key === 'spares') return (contract.spares || []).map((item) => [item.name, item.partNumber, item.serialNumber, item.quantity].filter(Boolean).join(' ')).join(', ')
+  if (key === 'subcontracts') return (contract.subcontracts || []).map((item) => [item.type, item.number, item.validFrom, item.validTo].filter(Boolean).join(' ')).join(', ')
+  if (typeof contract[key] === 'boolean') return contract[key] ? 'Yes' : 'No'
+  return contract[key] || ''
+}
 
 const emptyForm = {
   number: '',
@@ -344,15 +370,31 @@ const emptyForm = {
   spares: [{ name: '', partNumber: '', serialNumber: '', quantity: 1 }]
 }
 
-export default function ContractsPage({ contracts, setContracts, onCreateSubcontract }) {
+export default function ContractsPage({ contracts, setContracts, onCreateSubcontract, canManageCustomersAndContracts = false }) {
   const [showForm, setShowForm] = useState(false)
   const [selectedContract, setSelectedContract] = useState(null)
   const [editingContract, setEditingContract] = useState(null)
-  const [search, setSearch] = useState('')
+  const [visibleColumns, setVisibleColumns] = useState(() => columns.filter((column) => column.key !== 'actions').map((column) => column.key))
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false)
+  const [columnFilters, setColumnFilters] = useState({})
+  const [sortKey, setSortKey] = useState('number')
+  const [sortDescending, setSortDescending] = useState(false)
   const [columnWidths, setColumnWidths] = useState(() => Object.fromEntries(columns.map(({ key, width }) => [key, width])))
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  const filtered = useMemo(() => contracts.map(normalizeWarrantyStatus).filter(c => !search || c.number.toLowerCase().includes(search.toLowerCase()) || c.customer.toLowerCase().includes(search.toLowerCase())), [contracts, search])
+  const filtered = useMemo(() => contracts.map(normalizeWarrantyStatus)
+    .filter((contract) => Object.entries(columnFilters).every(([key, value]) => !value || String(contractListValue(contract, key)).toLowerCase().includes(value.toLowerCase())))
+    .sort((first, second) => {
+      const comparison = String(contractListValue(first, sortKey)).localeCompare(String(contractListValue(second, sortKey)), undefined, { numeric: true })
+      return sortDescending ? -comparison : comparison
+    }), [columnFilters, contracts, sortDescending, sortKey])
+
+  const updateColumnFilter = (key, value) => setColumnFilters((current) => ({ ...current, [key]: value }))
+  const toggleColumn = (key) => setVisibleColumns((current) => current.includes(key) ? (current.length === 1 ? current : current.filter((column) => column !== key)) : [...current, key])
+  const sortByColumn = (key) => {
+    if (sortKey === key) setSortDescending((current) => !current)
+    else { setSortKey(key); setSortDescending(false) }
+  }
 
   const startColumnResize = (event, column) => {
     event.preventDefault()
@@ -365,6 +407,7 @@ export default function ContractsPage({ contracts, setContracts, onCreateSubcont
   }
 
   const createContract = (form) => {
+    if (!canManageCustomersAndContracts) return
     const newContract = { 
       id: Math.max(...contracts.map(c => c.id), 0) + 1, 
       ...normalizeWarrantyStatus(form)
@@ -374,11 +417,13 @@ export default function ContractsPage({ contracts, setContracts, onCreateSubcont
   }
 
   const updateContract = (form) => {
+    if (!canManageCustomersAndContracts) return
     setContracts((current) => current.map(c => c.id === editingContract.id ? { ...c, ...normalizeWarrantyStatus(form) } : c))
     setEditingContract(null)
   }
 
   const deleteContract = (id) => {
+    if (!canManageCustomersAndContracts) return
     setContracts((current) => current.filter(c => c.id !== id))
     setDeleteConfirm(null)
   }
@@ -392,17 +437,15 @@ export default function ContractsPage({ contracts, setContracts, onCreateSubcont
 
   if (showForm) return <ContractForm onCancel={() => setShowForm(false)} onSubmit={createContract} />
   if (editingContract) return <ContractForm contract={editingContract} onCancel={() => setEditingContract(null)} onSubmit={updateContract} />
-  if (selectedContract) return <ContractDetail contract={selectedContract} onCancel={() => setSelectedContract(null)} onEdit={() => { setEditingContract(selectedContract); setSelectedContract(null) }} onCreateSubcontract={onCreateSubcontract} />
+  if (selectedContract) return <ContractDetail contract={selectedContract} onCancel={() => setSelectedContract(null)} canManageCustomersAndContracts={canManageCustomersAndContracts} onEdit={() => { setEditingContract(selectedContract); setSelectedContract(null) }} onCreateSubcontract={onCreateSubcontract} />
   if (deleteConfirm) return <DeleteConfirmation contract={deleteConfirm} onConfirm={(id) => deleteContract(id)} onCancel={() => setDeleteConfirm(null)} />
+  const activeColumns = columns.filter((column) => visibleColumns.includes(column.key))
 
   return (
-    <section className="customer-list-page">
-      <div className="customer-list-head"><div className="customer-list-title"><h1>Contracts</h1><p>Manage contract details, warranty commitments, AMC/CMC services, and covered deliverables.</p></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filtered.length}><Download size={15} /> Extract data</button><button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New contract</button></div></div>
-      <div className="customer-command-bar">
-        <div className="customer-search"><Search size={15} /><input aria-label="Search contracts" placeholder="Search contracts..." value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-        <span className="customer-list-count">{filtered.length ? `${filtered.length} contract${filtered.length === 1 ? '' : 's'}` : '0 results'}</span>
-      </div>
-      <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{columns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}</colgroup><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}{column.key !== 'actions' && <button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => startColumnResize(event, column)} />}</th>)}</tr></thead><tbody>{filtered.map((contract) => <tr key={contract.id}><td>{contract.number}</td><td>{contract.customer}</td><td>{formatDate(contract.signed)}</td><td>{formatDate(contract.jriDate)}</td><td>{formatDate(contract.expiryDate)}</td><td>{contract.warranty}</td><td>{contract.coverage.map((c) => <span key={c} className="badge">{c}</span>)}</td><td><span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span></td><td className="action-buttons"><button className="icon-button" title="View" onClick={() => setSelectedContract(contract)}><Eye size={14} /></button><button className="icon-button" title="Edit" onClick={() => setEditingContract(contract)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(contract)}><Trash2 size={14} /></button></td></tr>)}{!filtered.length && <tr><td colSpan="9" className="empty-row">No contracts match the search criteria.</td></tr>}</tbody></table></div></div>
+    <section className="customer-list-page contracts-list-page">
+      <div className="customer-list-head"><div className="customer-list-title"><h1>Contracts</h1><p>Manage contract details, warranty commitments, AMC/CMC services, and covered deliverables.</p></div><div className="user-list-actions"><button className="compact-button secondary" onClick={exportCsv} disabled={!filtered.length}><Download size={15} /> Extract data</button>{canManageCustomersAndContracts && <button className="customer-create-button" onClick={() => setShowForm(true)}><Plus size={15} /> New contract</button>}<div className="incident-column-menu"><button type="button" className="icon-button" title="Select list columns" aria-label="Select list columns" onClick={() => setColumnPickerOpen((open) => !open)}><Settings size={16} /></button>{columnPickerOpen && <div className="incident-column-picker"><strong>Visible columns</strong>{columns.filter((column) => column.key !== 'actions').map((column) => <label key={column.key}><input type="checkbox" checked={visibleColumns.includes(column.key)} onChange={() => toggleColumn(column.key)} /> {column.label}</label>)}</div>}</div></div></div>
+      <div className="customer-command-bar"><span className="customer-list-count">{filtered.length ? `${filtered.length} contract${filtered.length === 1 ? '' : 's'}` : '0 results'}</span></div>
+      <div className="customer-table-frame"><div className="customer-table-scroll"><table className="customer-table"><colgroup>{activeColumns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}<col style={{ width: columnWidths.actions }} /></colgroup><thead><tr>{activeColumns.map((column) => <th key={column.key}><button type="button" className="contract-column-sort" onClick={() => sortByColumn(column.key)}>{column.label}<ArrowUpDown size={13} /><span className="sr-only">{sortKey === column.key ? sortDescending ? 'descending' : 'ascending' : 'not sorted'}</span></button><button className="column-resize-handle" aria-label={`Resize ${column.label} column`} onMouseDown={(event) => startColumnResize(event, column)} /></th>)}<th>Actions</th></tr><tr className="contract-column-filters">{activeColumns.map((column) => <th key={column.key}><input aria-label={`Filter ${column.label}`} value={columnFilters[column.key] || ''} onChange={(event) => updateColumnFilter(column.key, event.target.value)} placeholder="Search" /></th>)}<th /></tr></thead><tbody>{filtered.map((contract) => <tr key={contract.id}>{activeColumns.map((column) => <td key={column.key}>{['signed', 'jriDate', 'expiryDate', 'minorService', 'majorService'].includes(column.key) ? formatDate(contract[column.key]) : column.key === 'coverage' ? contract.coverage.map((coverage) => <span key={coverage} className="badge">{coverage}</span>) : column.key === 'status' ? <span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span> : contractListValue(contract, column.key)}</td>)}<td className="action-buttons"><button className="icon-button" title="View" onClick={() => setSelectedContract(contract)}><Eye size={14} /></button>{canManageCustomersAndContracts && <><button className="icon-button" title="Edit" onClick={() => setEditingContract(contract)}><Edit2 size={14} /></button><button className="icon-button danger" title="Delete" onClick={() => setDeleteConfirm(contract)}><Trash2 size={14} /></button></>}</td></tr>)}{!filtered.length && <tr><td colSpan={activeColumns.length + 1} className="empty-row">No contracts match the current filters.</td></tr>}</tbody></table></div></div>
       <footer className="customer-pagination"><span>Total: {contracts.length} contract{contracts.length === 1 ? '' : 's'}</span></footer>
     </section>
   )
@@ -438,27 +481,26 @@ function ContractForm({ contract, onCancel, onSubmit }) {
       <section className="customer-form-section"><h2>Important Dates</h2><div className="customer-form-grid"><label className={`customer-field ${errors.entryDate ? 'has-error' : ''}`}><span>{errors.entryDate && <em>*</em>}Entry date (Contract execution)</span><input type="date" value={form.entryDate} onChange={(e) => update('entryDate', e.target.value)} />{errors.entryDate && <small>{errors.entryDate}</small>}</label><label className={`customer-field ${errors.jriDate ? 'has-error' : ''}`}><span>{errors.jriDate && <em>*</em>}JRI date (Product delivery)</span><input type="date" value={form.jriDate} onChange={(e) => { const jriDate = e.target.value; setForm((current) => normalizeWarrantyStatus({ ...current, jriDate, expiryDate: warrantyExpiryFromJri(jriDate) })) }} />{errors.jriDate && <small>{errors.jriDate}</small>}</label><label className={`customer-field ${errors.expiryDate ? 'has-error' : ''}`}><span>{errors.expiryDate && <em>*</em>}Warranty expiry date</span><input type="date" value={form.expiryDate} onChange={(e) => setForm((current) => normalizeWarrantyStatus({ ...current, expiryDate: e.target.value }))} />{errors.expiryDate && <small>{errors.expiryDate}</small>}</label><label className={`customer-field ${errors.status ? 'has-error' : ''}`}><span>{errors.status && <em>*</em>}Contract status</span><select value={form.status} onChange={(e) => update('status', e.target.value)}><option value="">Select status</option><option>Active</option><option>Inactive</option><option>Expired</option></select>{errors.status && <small>{errors.status}</small>}</label></div></section>
       <section className="customer-form-section"><h2>Warranty & Status</h2><div className="customer-form-grid"><label className="customer-field"><span>Warranty status</span><input value={form.warranty || 'Set a warranty expiry date'} readOnly /></label><label className="customer-field"><span>System</span><input value={form.system || ''} onChange={(e) => update('system', e.target.value)} placeholder="e.g. Loitering Munition" /></label><label className="customer-field"><span>Incident number prefix</span><input value={form.incidentPrefix} onChange={(e) => update('incidentPrefix', e.target.value)} placeholder="e.g. IAF" /></label></div></section>
       <section className="customer-form-section"><div className="customer-form-section-heading"><div><h2>Related subcontracts</h2><p>AMC and CMC coverage is retained under this main contract.</p></div><button type="button" className="compact-button secondary" onClick={addSubcontract}><Plus size={14} /> Add subcontract</button></div>{errors.subcontracts && <p className="contract-subcontract-error">{errors.subcontracts}</p>}<div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Type</th><th>Subcontract number</th><th>Valid from</th><th>Valid to</th><th>Actions</th></tr></thead><tbody>{form.subcontracts.map((item, index) => <tr key={item.id}><td><select value={item.type} onChange={(event) => updateSubcontract(index, 'type', event.target.value)}><option value="AMC">AMC</option><option value="CMC">CMC</option></select></td><td><input value={item.number} onChange={(event) => updateSubcontract(index, 'number', event.target.value)} placeholder="Contract number" /></td><td><input type="date" value={item.validFrom} onChange={(event) => updateSubcontract(index, 'validFrom', event.target.value)} /></td><td><input type="date" value={item.validTo} onChange={(event) => updateSubcontract(index, 'validTo', event.target.value)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeSubcontract(index)} title="Remove subcontract"><Trash2 size={14} /></button></td></tr>)}{!form.subcontracts.length && <tr><td colSpan="5" className="empty-row">No AMC or CMC subcontracts added.</td></tr>}</tbody></table></div></section>
-      <section className="customer-form-section"><h2>Documentation</h2><div className="customer-form-grid"><label className="customer-field"><span>Manuals & versions</span><textarea value={form.manuals} onChange={(e) => update('manuals', e.target.value)} placeholder="e.g. v1.0, v1.1, v2.0" rows="2" /></label><label className="customer-field"><span>Visit record details</span><textarea value={form.visitRecord} onChange={(e) => update('visitRecord', e.target.value)} placeholder="e.g. 3 personnel, 5 days per visit" rows="2" /></label></div></section>
-      <section className="customer-form-section"><h2>Deliverables</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th><th>Actions</th></tr></thead><tbody>{form.deliverables.map((item, idx) => <tr key={idx}><td><select aria-label={`Deliverable ${idx + 1} product`} value={item.product} onChange={(e) => updateDeliverable(idx, 'product', e.target.value)}><option value="">Select product</option>{!deliverableProducts.includes(item.product) && item.product && <option value={item.product}>{item.product}</option>}{deliverableProducts.map((product) => <option key={product} value={product}>{product}</option>)}</select></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateDeliverable(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeDeliverable(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addDeliverable}><Plus size={15} /> Add deliverable</button></section>
-      <section className="customer-form-section"><h2>Spares</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Spare Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th><th>Actions</th></tr></thead><tbody>{form.spares.map((item, idx) => <tr key={idx}><td><input value={item.name} onChange={(e) => updateSpare(idx, 'name', e.target.value)} placeholder="Spare name" /></td><td><input value={item.partNumber} onChange={(e) => updateSpare(idx, 'partNumber', e.target.value)} placeholder="Part number" /></td><td><input value={item.serialNumber} onChange={(e) => updateSpare(idx, 'serialNumber', e.target.value)} placeholder="Serial number" /></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateSpare(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeSpare(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addSpare}><Plus size={15} /> Add spare</button></section>
+      <section className="customer-form-section"><h2>Deliverables</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Custom details</th><th>Quantity</th><th>Actions</th></tr></thead><tbody>{form.deliverables.map((item, idx) => <tr key={idx}><td><select aria-label={`Deliverable ${idx + 1} product`} value={item.product} onChange={(e) => updateDeliverable(idx, 'product', e.target.value)}><option value="">Select product</option>{!deliverableProducts.includes(item.product) && item.product && <option value={item.product}>{item.product}</option>}{deliverableProducts.map((product) => <option key={product} value={product}>{product}</option>)}</select></td><td>{item.product === 'Others' && <input aria-label={`Deliverable ${idx + 1} custom details`} value={item.otherDetails || ''} onChange={(e) => updateDeliverable(idx, 'otherDetails', e.target.value)} placeholder="Enter custom details" />}</td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateDeliverable(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeDeliverable(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addDeliverable}><Plus size={15} /> Add deliverable</button></section>
+      <section className="customer-form-section"><h2>MRLS</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>MRLS Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th><th>Actions</th></tr></thead><tbody>{form.spares.map((item, idx) => <tr key={idx}><td><input value={item.name} onChange={(e) => updateSpare(idx, 'name', e.target.value)} placeholder="MRLS name" /></td><td><input value={item.partNumber} onChange={(e) => updateSpare(idx, 'partNumber', e.target.value)} placeholder="Part number" /></td><td><input value={item.serialNumber} onChange={(e) => updateSpare(idx, 'serialNumber', e.target.value)} placeholder="Serial number" /></td><td><input type="number" min="1" value={item.quantity} onChange={(e) => updateSpare(idx, 'quantity', parseInt(e.target.value) || 1)} /></td><td><button type="button" className="icon-button danger" onClick={() => removeSpare(idx)} title="Remove"><Trash2 size={14} /></button></td></tr>)}</tbody></table></div><button type="button" className="add-contact-btn" onClick={addSpare}><Plus size={15} /> Add MRLS</button></section>
     </section>
     <footer className="customer-form-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Cancel</button><button type="submit" className="customer-submit-button">Save contract</button></footer>
   </form>
 }
 
-function ContractDetail({ contract, onCancel, onEdit, onCreateSubcontract }) {
+function ContractDetail({ contract, onCancel, onEdit, onCreateSubcontract, canManageCustomersAndContracts }) {
   const normalizedContract = normalizeWarrantyStatus(contract)
   const activeCoverage = normalizedContract.subcontracts.filter((subcontract) => subcontractStatus(subcontract) === 'Active')
   return <section className="customer-detail-page">
-    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract.number}</h1><p className="customer-detail-subtitle">{contract.customer}</p></div><div className="customer-detail-actions"><button type="button" className="customer-cancel-button" onClick={() => onCreateSubcontract?.(contract.number)}><Plus size={15} /> New sub-contract</button><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></div></header>
+    <header className="customer-detail-header"><div><button type="button" className="customer-back-button" onClick={onCancel}><ArrowLeft size={15} /> Contracts</button><h1>{contract.number}</h1><p className="customer-detail-subtitle">{contract.customer}</p></div><div className="customer-detail-actions">{canManageCustomersAndContracts && <button type="button" className="customer-cancel-button" onClick={() => onCreateSubcontract?.(contract.number)}><Plus size={15} /> New sub-contract</button>}<button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button>{canManageCustomersAndContracts && <button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button>}</div></header>
     <section className="customer-detail-sheet">
       <section className="detail-section"><h2>Contract Details</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Contract Number</span><span className="detail-value">{contract.number}</span></div><div className="detail-field"><span className="detail-label">Customer</span><span className="detail-value">{contract.customer}</span></div><div className="detail-field"><span className="detail-label">Status</span><span className={`badge ${contract.status === 'Active' ? 'active' : 'inactive'}`}>{contract.status}</span></div><div className="detail-field"><span className="detail-label">Warranty</span><span className="detail-value">{normalizedContract.warranty}</span></div><div className="detail-field"><span className="detail-label">Active coverage</span><span className="detail-value">{activeCoverage.length ? activeCoverage.map((subcontract) => <span key={subcontract.id} className="badge">{subcontract.type}</span>) : '--'}</span></div><div className="detail-field"><span className="detail-label">System</span><span className="detail-value">{contract.system || '--'}</span></div></div></section>
       <section className="detail-section"><h2>Important Dates</h2><div className="detail-grid"><div className="detail-field"><span className="detail-label">Entry Date</span><span className="detail-value">{formatDate(contract.entryDate)}</span></div><div className="detail-field"><span className="detail-label">JRI Date</span><span className="detail-value">{formatDate(contract.jriDate)}</span></div><div className="detail-field"><span className="detail-label">Expiry Date</span><span className="detail-value">{formatDate(contract.expiryDate)}</span></div></div></section>
       <section className="detail-section"><h2>Subcontracts ({normalizedContract.subcontracts.length})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Type</th><th>Subcontract number</th><th>Valid from</th><th>Valid to</th><th>Status</th></tr></thead><tbody>{normalizedContract.subcontracts.map((subcontract) => <tr key={subcontract.id}><td>{subcontract.type}</td><td>{subcontract.number}</td><td>{formatDate(subcontract.validFrom)}</td><td>{formatDate(subcontract.validTo)}</td><td><span className="badge">{subcontractStatus(subcontract)}</span></td></tr>)}{!normalizedContract.subcontracts.length && <tr><td colSpan="5" className="empty-row">No AMC or CMC subcontracts configured.</td></tr>}</tbody></table></div></section>
-      <section className="detail-section"><h2>Deliverables ({contract.deliverables?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th></tr></thead><tbody>{(contract.deliverables || []).map((item, idx) => <tr key={idx}><td>{item.product}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.deliverables?.length && <tr><td colSpan="2" className="empty-row">No deliverables configured.</td></tr>}</tbody></table></div></section>
-      <section className="detail-section"><h2>Spares ({contract.spares?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Spare Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th></tr></thead><tbody>{(contract.spares || []).map((item, idx) => <tr key={idx}><td>{item.name}</td><td>{item.partNumber}</td><td>{item.serialNumber}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.spares?.length && <tr><td colSpan="4" className="empty-row">No spares configured.</td></tr>}</tbody></table></div></section>
+      <section className="detail-section"><h2>Deliverables ({contract.deliverables?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>Product</th><th>Quantity</th></tr></thead><tbody>{(contract.deliverables || []).map((item, idx) => <tr key={idx}><td>{item.product === 'Others' ? item.otherDetails || 'Others' : item.product}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.deliverables?.length && <tr><td colSpan="2" className="empty-row">No deliverables configured.</td></tr>}</tbody></table></div></section>
+      <section className="detail-section"><h2>MRLS ({contract.spares?.length || 0})</h2><div className="contacts-table-wrapper"><table className="contacts-table"><thead><tr><th>MRLS Name</th><th>Part Number</th><th>Serial Number</th><th>Qty</th></tr></thead><tbody>{(contract.spares || []).map((item, idx) => <tr key={idx}><td>{item.name}</td><td>{item.partNumber}</td><td>{item.serialNumber}</td><td className="numeric">{item.quantity}</td></tr>)}{!contract.spares?.length && <tr><td colSpan="4" className="empty-row">No MRLS configured.</td></tr>}</tbody></table></div></section>
     </section>
-    <footer className="customer-detail-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button><button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button></footer>
+    <footer className="customer-detail-footer"><button type="button" className="customer-cancel-button" onClick={onCancel}>Close</button>{canManageCustomersAndContracts && <button type="button" className="customer-edit-button" onClick={onEdit}><Edit2 size={15} /> Edit</button>}</footer>
   </section>
 }
 

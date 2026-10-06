@@ -163,7 +163,7 @@ def classify_beyond_economical_repair(
 
 
 @router.post("/repairs/attach")
-def attach_component_repair(source_incident_id: str, repair_incident_id: str, database: Session = Depends(get_db)) -> dict[str, Any]:
+def attach_component_repair(source_incident_id: str, repair_incident_id: str, database: Session = Depends(get_db), claims: dict = Depends(require_session), _: None = Depends(require_csrf)) -> dict[str, Any]:
     try:
         result = attach_repair_to_incident(database, source_incident_id, repair_incident_id)
         database.commit()

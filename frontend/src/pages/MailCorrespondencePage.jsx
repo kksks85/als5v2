@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { downloadWorkbook, readWorkbookObjects } from '../data/spreadsheet'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import { CheckCircle2, Download, FileSpreadsheet, Inbox, Mail, Paperclip, Pencil, Plus, Search, Send, Trash2, Upload, X } from 'lucide-react'
@@ -186,9 +186,7 @@ export default function MailCorrespondencePage({ correspondence, setCorresponden
     const file = event.target.files?.[0]
     if (!file) return
     try {
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
-      const sheet = workbook.Sheets[workbook.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false })
+      const rows = await readWorkbookObjects(await file.arrayBuffer())
       const imported = rows.map((row, index) => {
         const get = (...aliases) => row[Object.keys(row).find((header) => aliases.includes(normalise(header)))] || ''
         const label = get('label', 'mailtype', 'direction')
@@ -209,10 +207,7 @@ export default function MailCorrespondencePage({ correspondence, setCorresponden
     event.target.value = ''
   }
 
-  const downloadTemplate = () => {
-    const worksheet = XLSX.utils.json_to_sheet([Object.fromEntries(columns.map(([, label]) => [label, '']))])
-    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, 'Mail Correspondence'); XLSX.writeFile(workbook, 'mail-correspondence-import-template.xlsx')
-  }
+  const downloadTemplate = () => downloadWorkbook('mail-correspondence-import-template.xlsx', 'Mail Correspondence', [Object.fromEntries(columns.map(([, label]) => [label, '']))])
 
   if (editing) return <AttachmentAwareMailForm record={editing} users={users} onCancel={() => setEditing(null)} onSave={save} />
   return <section className="mail-page">
@@ -220,7 +215,7 @@ export default function MailCorrespondencePage({ correspondence, setCorresponden
     <div className="mail-metrics"><Metric label="Total correspondence" value={correspondence.length} icon={Mail} /><Metric label="Mail In pending" value={correspondence.filter((item) => item.label === 'Mail In' && item.status === 'Pending').length} icon={Inbox} /><Metric label="Mail Out pending" value={correspondence.filter((item) => item.label === 'Mail Out' && item.status === 'Pending').length} icon={Send} /></div>
     <div className="mail-toolbar"><label><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search reference, subject, file or assignee..." /></label><select value={bucketFilter} onChange={(event) => setBucketFilter(event.target.value)} aria-label="Filter by Bucket or File number"><option value="All">All buckets</option>{bucketOptions.map((bucket) => <option key={bucket} value={bucket}>{bucket}</option>)}</select><select value={labelFilter} onChange={(event) => setLabelFilter(event.target.value)} aria-label="Filter by Mail label"><option>All</option><option>Mail In</option><option>Mail Out</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by Status"><option>All</option><option>Pending</option><option>Completed</option></select><span>{filtered.length} record{filtered.length === 1 ? '' : 's'}</span></div>
     {importMessage && <div className="mail-message"><CheckCircle2 size={15} /> {importMessage}<button onClick={() => setImportMessage('')} aria-label="Dismiss import message"><X size={14} /></button></div>}
-    <div className="mail-table-frame"><table className="mail-table"><thead><tr><th>Reference / dated</th><th>Subject / summary</th><th>Bucket / file</th><th>Priority</th><th>Assigned to</th><th>Due date</th><th>Label</th><th>Status</th><th>Files</th><th /></tr></thead><tbody>{filtered.map((record) => <tr key={record.id}><td><strong>{record.mailReferenceNumber || '--'}</strong><small>{displayDate(record.dated)}</small></td><td><strong>{record.subject || '--'}</strong><small>{record.mailSummary || '--'}</small></td><td>{record.bucketFileNumber || '--'}</td><td><span className={`mail-priority ${record.priority.toLowerCase()}`}>{record.priority}</span></td><td>{record.assignedTo || '--'}<small>By {record.createdBy || '--'}</small></td><td>{displayDate(record.dueDate)}</td><td><span className={`mail-label ${record.label === 'Mail Out' ? 'out' : 'in'}`}>{record.label}</span></td><td><span className={`mail-status ${record.status.toLowerCase()}`}>{record.status}</span></td><td>{record.attachments?.length || 0}</td><td className="mail-actions"><button className="action-btn" title="Edit correspondence" onClick={() => setEditing(record)}><Pencil size={15} /></button><button className="action-btn delete" title="Delete correspondence" onClick={() => setCorrespondence((current) => current.filter((item) => item.id !== record.id))}><Trash2 size={15} /></button></td></tr>)}{!filtered.length && <tr><td colSpan="10" className="empty-row">No mail correspondence matches the selected filters.</td></tr>}</tbody></table></div>
+    <div className="mail-table-frame"><table className="mail-table"><thead><tr><th>Reference / dated</th><th>Subject / summary</th><th>Bucket / file</th><th>Priority</th><th>Assigned to</th><th>Due date</th><th>Label</th><th>Status</th><th>Files</th><th /></tr></thead><tbody>{filtered.map((record) => <tr key={record.id}><td><strong>{record.mailReferenceNumber || '--'}</strong><small>{displayDate(record.dated)}</small></td><td><strong>{record.subject || '--'}</strong><small>{record.mailSummary || '--'}</small></td><td>{record.bucketFileNumber || '--'}</td><td><span className={`mail-priority ${record.priority.toLowerCase()}`}>{record.priority}</span></td><td>{record.assignedTo || '--'}<small>By {record.createdBy || '--'}</small></td><td>{displayDate(record.dueDate)}</td><td><span className={`mail-label ${record.label === 'Mail Out' ? 'out' : 'in'}`}>{record.label}</span></td><td><span className={`mail-status ${record.status.toLowerCase()}`}>{record.status}</span></td><td>{record.attachments?.length || 0}</td><td className="mail-actions"><button className="action-btn" title="Edit correspondence" onClick={() => setEditing(record)}><Pencil size={15} /></button><button className="action-btn delete" title="Delete correspondence" onClick={() => { if (window.confirm(`Delete correspondence ${record.mailReferenceNumber || record.id}? This action cannot be undone.`)) setCorrespondence((current) => current.filter((item) => item.id !== record.id)) }}><Trash2 size={15} /></button></td></tr>)}{!filtered.length && <tr><td colSpan="10" className="empty-row">No mail correspondence matches the selected filters.</td></tr>}</tbody></table></div>
   </section>
 }
 

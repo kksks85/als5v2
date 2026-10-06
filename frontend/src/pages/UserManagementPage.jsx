@@ -116,7 +116,9 @@ export default function UserManagementPage({ assignmentGroups, users, setUsers }
     URL.revokeObjectURL(url)
   }
 
-  const removeUser = (id) => setUsers((current) => current.filter((user) => user.id !== id))
+  const removeUser = (id) => {
+    if (window.confirm('Delete this user? This action cannot be undone.')) setUsers((current) => current.filter((user) => user.id !== id))
+  }
 
   const resetPassword = async (user) => {
     try {

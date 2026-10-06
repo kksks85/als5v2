@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+import { readWorkbook } from './spreadsheet'
 
 const normalizeHeader = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 export const normalizePartNumber = (value) => String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
@@ -33,17 +33,14 @@ const resolveIndexes = (headerRow, aliases) => Object.fromEntries(Object.entries
   headerRow.findIndex((header) => candidates.includes(normalizeHeader(header))),
 ]))
 
-const sheetRows = (sheet) => XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
-
-export const parseProductMasterWorkbook = (arrayBuffer, columns, idPrefix, fileName = 'Product Master workbook') => {
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+export const parseProductMasterWorkbook = async (arrayBuffer, columns, idPrefix, fileName = 'Product Master workbook') => {
+  const sheets = await readWorkbook(arrayBuffer)
   const rows = []
   const invalidRows = []
   const skippedSheets = []
   const requiredColumns = columns.filter((column) => column.required)
 
-  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
-    const values = sheetRows(workbook.Sheets[sheetName])
+  sheets.forEach(({ name: sheetName, rows: values }, sheetIndex) => {
     const headerIndex = findHeaderRow(values, requiredColumns.map((column) => [normalizeHeader(column.label)]))
     if (headerIndex === -1) {
       skippedSheets.push({ sheetName, reason: `Required headers were not found: ${requiredColumns.map((column) => column.label).join(', ')}.` })
@@ -67,17 +64,16 @@ export const parseProductMasterWorkbook = (arrayBuffer, columns, idPrefix, fileN
     })
   })
 
-  return { fileName, sheetNames: workbook.SheetNames, rows, invalidRows, skippedSheets }
+  return { fileName, sheetNames: sheets.map(({ name }) => name), rows, invalidRows, skippedSheets }
 }
 
-export const parseRouteCardWorkbook = (arrayBuffer, fileName = 'Route Card workbook') => {
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+export const parseRouteCardWorkbook = async (arrayBuffer, fileName = 'Route Card workbook') => {
+  const sheets = await readWorkbook(arrayBuffer)
   const rows = []
   const invalidRows = []
   const skippedSheets = []
 
-  workbook.SheetNames.forEach((sheetName) => {
-    const values = sheetRows(workbook.Sheets[sheetName])
+  sheets.forEach(({ name: sheetName, rows: values }) => {
     const headerIndex = findHeaderRow(values, [routeFieldAliases.partNumber, routeFieldAliases.materialDescription])
     if (headerIndex === -1) {
       skippedSheets.push({ sheetName, reason: 'Part Number and Material Description headers were not found.' })
@@ -116,17 +112,16 @@ export const parseRouteCardWorkbook = (arrayBuffer, fileName = 'Route Card workb
     })
   })
 
-  return { fileName, sheetNames: workbook.SheetNames, rows, invalidRows, skippedSheets }
+  return { fileName, sheetNames: sheets.map(({ name }) => name), rows, invalidRows, skippedSheets }
 }
 
-export const parseConfigurationWorkbook = (arrayBuffer, fileName = 'Configuration workbook') => {
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+export const parseConfigurationWorkbook = async (arrayBuffer, fileName = 'Configuration workbook') => {
+  const sheets = await readWorkbook(arrayBuffer)
   const rows = []
   const invalidRows = []
   const skippedSheets = []
 
-  workbook.SheetNames.forEach((sheetName) => {
-    const values = sheetRows(workbook.Sheets[sheetName])
+  sheets.forEach(({ name: sheetName, rows: values }) => {
     const headerIndex = findHeaderRow(values, [configurationFieldAliases.partNumber, configurationFieldAliases.serialNumber])
     if (headerIndex === -1) {
       skippedSheets.push({ sheetName, reason: 'Part Number and Serial Number headers were not found.' })
@@ -156,7 +151,7 @@ export const parseConfigurationWorkbook = (arrayBuffer, fileName = 'Configuratio
     })
   })
 
-  return { fileName, sheetNames: workbook.SheetNames, rows, invalidRows, skippedSheets }
+  return { fileName, sheetNames: sheets.map(({ name }) => name), rows, invalidRows, skippedSheets }
 }
 
 const productRecordId = (productSerialNumber, routeRow, configurationRow) => [
