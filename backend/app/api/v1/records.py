@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AssignmentGroupRecord, AuditLogRecord, CalendarEventRecord, ContractMrlsRecord, ContractRecord, CustomerRecord, EmailLogRecord, EmailSettingsRecord, EmailTemplateRecord, IncidentRecord, KnowledgeDocumentRecord, MailCorrespondenceRecord, NotificationRecord, OutboundEmailRuleRecord, ProcessConfigurationRecord, ProductAssetRecord, ProductMasterRecord, ProductRecord, QueryRecord, RepairExecutionRecord, SubcontractRecord, SystemSettingsRecord, UserRecord
 from app.api.v1.authentication import require_administrator, require_csrf, require_session
-from app.services.authentication import AUTH_PAYLOAD_KEY, provision_user_credentials, public_user_payload
+from app.services.authentication import AUTH_PAYLOAD_KEY, find_local_user, provision_user_credentials, public_user_payload
 
 router = APIRouter(prefix="/records", tags=["records"])
 
@@ -73,6 +73,8 @@ PRODUCT_MASTER_RESOURCES = {
     "gse_products",
     "warranty_quality_claims",
 }
+TICKET_RESOURCES = {"incidents", "queries", "warranty_quality_claims"}
+CSM_GROUP_NAME = "Customer Support Management Group"
 
 
 class RecordInput(BaseModel):
@@ -104,6 +106,63 @@ def is_contract_mrls_inventory_record(resource: str, record_id: str) -> bool:
 
 def prune_expired_email_logs(database: Session) -> None:
     database.execute(delete(EmailLogRecord).where(EmailLogRecord.created_at < datetime.now(UTC) - timedelta(days=10)))
+
+
+def ticket_payload(resource: str, record_id: str, database: Session) -> dict[str, Any] | None:
+    if resource in PRODUCT_MASTER_RESOURCES:
+        record = database.scalar(select(ProductMasterRecord).where(ProductMasterRecord.resource == resource, ProductMasterRecord.record_id == record_id))
+    else:
+        model = RESOURCE_MODELS[resource]
+        record = database.scalar(select(model).where(model.record_id == record_id))
+    return record.payload if record else None
+
+
+def user_identifiers(user: UserRecord) -> set[str]:
+    return {
+        str(value) for value in (
+            user.record_id,
+            user.payload.get("id"),
+            user.payload.get("name"),
+            user.payload.get("email"),
+            user.payload.get("username"),
+        ) if value not in {None, ""}
+    }
+
+
+def is_group_member(group: AssignmentGroupRecord, identifiers: set[str]) -> bool:
+    payload = group.payload
+    return str(payload.get("manager", "")) in identifiers or any(str(member_id) in identifiers for member_id in payload.get("memberIds", []))
+
+
+def require_ticket_write_access(resource: str, records: list[RecordInput], claims: dict, database: Session) -> None:
+    roles = set(claims.get("roles", []))
+    if "Administrator" in roles:
+        return
+
+    user = find_local_user(database, claims["sub"])
+    if not user:
+        raise HTTPException(status_code=403, detail="The signed-in user is not configured.")
+    identifiers = user_identifiers(user)
+    groups = database.scalars(select(AssignmentGroupRecord)).all()
+    is_csm_member = any(
+        group.payload.get("name") == CSM_GROUP_NAME and is_group_member(group, identifiers)
+        for group in groups
+    )
+    if is_csm_member:
+        return
+
+    if resource not in TICKET_RESOURCES:
+        raise HTTPException(status_code=403, detail="Administrator or Customer Support Management Group access is required.")
+
+    group_names = {str(group.payload.get("name", "")) for group in groups if is_group_member(group, identifiers)}
+    for record in records:
+        existing_payload = ticket_payload(resource, record.record_id, database)
+        if not existing_payload:
+            raise HTTPException(status_code=403, detail="Only a Customer Support Management Manager can create tickets.")
+        is_assigned_user = str(existing_payload.get("assignedTo", "")) in identifiers
+        is_assigned_group = str(existing_payload.get("assignmentGroup") or existing_payload.get("group") or "") in group_names
+        if not (is_assigned_user or is_assigned_group):
+            raise HTTPException(status_code=403, detail="You may only update tickets assigned to you or your assignment group.")
 
 
 @router.get("/{resource}")
@@ -142,18 +201,20 @@ def list_records(resource: str, claims: dict = Depends(require_session), databas
 
 
 @router.put("/{resource}/{record_id}")
-def upsert_record(resource: str, record_id: str, record: RecordInput, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, str]:
+def upsert_record(resource: str, record_id: str, record: RecordInput, claims: dict = Depends(require_session), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, str]:
     validate_resource(resource)
     if record.record_id != record_id:
         raise HTTPException(status_code=422, detail="Record identifier does not match the request path.")
+    require_ticket_write_access(resource, [record], claims, database)
     write_records(resource, [record], database)
     database.commit()
     return {"status": "saved", "record_id": record_id}
 
 
 @router.post("/{resource}/bulk-upsert")
-def bulk_upsert_records(resource: str, body: BulkRecordsInput, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, int]:
+def bulk_upsert_records(resource: str, body: BulkRecordsInput, claims: dict = Depends(require_session), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, int]:
     validate_resource(resource)
+    require_ticket_write_access(resource, body.records, claims, database)
     write_records(resource, body.records, database)
     database.commit()
     return {"saved": len(body.records)}

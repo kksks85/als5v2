@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.v1.authentication import require_administrator, require_session, require_csrf
+from app.api.v1.authentication import require_administrator, require_administrator_or_csm_member, require_session, require_csrf
 from app.database import get_db
 from app.schemas.domain import ContractMrlsGenerate, ContractMrlsLineCreate, ContractSave
 from app.services.contract_mrls import create_contract_mrls_line, delete_contract_with_mrls_records, generate_contract_mrls_components, list_contract_mrls_lines, save_contract_with_mrls_records
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/contract-mrls", tags=["contract-mrls"])
 
 
 @router.put("/contracts/{record_id}")
-def save_contract(record_id: str, command: ContractSave, claims: dict = Depends(require_session), _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
+def save_contract(record_id: str, command: ContractSave, claims: dict = Depends(require_session), _: None = Depends(require_administrator_or_csm_member), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
     try:
         result = save_contract_with_mrls_records(database, record_id, command, claims["sub"])
         database.commit()
@@ -39,7 +39,7 @@ def get_contract_mrls_lines(contract_id: int, database: Session = Depends(get_db
 
 
 @router.post("/contracts/{contract_id}/lines")
-def add_contract_mrls_line(contract_id: int, command: ContractMrlsLineCreate, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
+def add_contract_mrls_line(contract_id: int, command: ContractMrlsLineCreate, _: None = Depends(require_administrator_or_csm_member), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
     try:
         result = create_contract_mrls_line(database, contract_id, command)
         database.commit()
@@ -50,7 +50,7 @@ def add_contract_mrls_line(contract_id: int, command: ContractMrlsLineCreate, _:
 
 
 @router.post("/lines/{line_id}/generate")
-def generate_contract_mrls(line_id: int, command: ContractMrlsGenerate, _: None = Depends(require_administrator), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
+def generate_contract_mrls(line_id: int, command: ContractMrlsGenerate, _: None = Depends(require_administrator_or_csm_member), csrf: None = Depends(require_csrf), database: Session = Depends(get_db)) -> dict[str, Any]:
     try:
         result = generate_contract_mrls_components(database, line_id, command)
         database.commit()

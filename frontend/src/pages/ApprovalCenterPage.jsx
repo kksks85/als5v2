@@ -4,79 +4,6 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock, Download, Eye, GitBranch, 
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--'
 
 const APPROVAL_TYPES = ['Document release', 'Change request', 'Service waiver', 'Incident closure', 'Asset write-off', 'Pre-dispatch group approval', 'Material Replacement Approval']
-const APPROVAL_PRIORITIES = ['Critical', 'High', 'Normal', 'Low']
-const seedApprovals = (currentUser, users, incidents, knowledgeDocuments) => {
-  const approvers = users.filter((user) => user.role === 'Manager' || user.role === 'Administrator')
-  const delegates = users.filter((user) => user.role === 'Manager')
-  const subjects = [
-    ...incidents.slice(0, 8).map((incident) => ({ ref: incident.id, title: `Closure approval: ${incident.title.slice(0, 55)}`, type: 'Incident closure' })),
-    ...knowledgeDocuments.slice(0, 4).map((doc) => ({ ref: doc.code || doc.id, title: `Release approval: ${doc.title}`, type: 'Document release' })),
-  ]
-  const statuses = ['Pending', 'Pending', 'Pending', 'Approved', 'Rejected', 'Delegated']
-  const now = new Date('2026-07-23T00:00:00')
-  const base = Array.from({ length: Math.min(16, subjects.length) }, (_, index) => {
-    const subject = subjects[index]
-    const approver = approvers[index % approvers.length]
-    const delegateTo = delegates[(index + 2) % delegates.length]
-    const status = statuses[index % statuses.length]
-    const requestedDays = (index + 1) * 2
-    const dueDays = requestedDays + 7
-    const requestedDate = new Date(now - requestedDays * 86400000).toISOString().slice(0, 10)
-    const dueDate = new Date(now.getTime() + (dueDays - requestedDays) * 86400000).toISOString().slice(0, 10)
-    return {
-      id: `APR-2026-${String(index + 1).padStart(4, '0')}`,
-      ref: subject.ref,
-      title: subject.title,
-      type: subject.type || APPROVAL_TYPES[index % APPROVAL_TYPES.length],
-      priority: APPROVAL_PRIORITIES[index % APPROVAL_PRIORITIES.length],
-      status,
-      requestedBy: approvers[(index + 1) % approvers.length].name,
-      assignedTo: approver.name,
-      assignedToEmail: approver.email,
-      delegatedTo: status === 'Delegated' ? delegateTo.name : '',
-      requestedOn: requestedDate,
-      dueBy: dueDate,
-      remarks: status === 'Approved' ? 'Approved as per review.' : status === 'Rejected' ? 'Returned – additional documentation required.' : '',
-    }
-  })
-
-  // Always inject two contextual delegation entries so both directions are visible for any signed-in user
-  const otherApprover = approvers.find((user) => user.email !== currentUser.email) || approvers[0]
-  const otherDelegate = delegates.find((user) => user.email !== currentUser.email && user.name !== otherApprover.name) || delegates[0]
-  const contextual = [
-    {
-      id: 'APR-2026-D001',
-      ref: subjects[0]?.ref || 'CTX-001',
-      title: `Service waiver delegated by you: ${subjects[0]?.title?.slice(0, 50) || 'Pending review'}`,
-      type: 'Service waiver',
-      priority: 'High',
-      status: 'Delegated',
-      requestedBy: otherApprover.name,
-      assignedTo: currentUser.name,
-      assignedToEmail: currentUser.email,
-      delegatedTo: otherDelegate.name,
-      requestedOn: new Date(now.getTime() - 3 * 86400000).toISOString().slice(0, 10),
-      dueBy: new Date(now.getTime() + 11 * 86400000).toISOString().slice(0, 10),
-      remarks: '',
-    },
-    {
-      id: 'APR-2026-D002',
-      ref: subjects[1]?.ref || 'CTX-002',
-      title: `Change request delegated to you: ${subjects[1]?.title?.slice(0, 50) || 'Pending review'}`,
-      type: 'Change request',
-      priority: 'Normal',
-      status: 'Delegated',
-      requestedBy: otherDelegate.name,
-      assignedTo: otherApprover.name,
-      assignedToEmail: otherApprover.email,
-      delegatedTo: currentUser.name,
-      requestedOn: new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10),
-      dueBy: new Date(now.getTime() + 8 * 86400000).toISOString().slice(0, 10),
-      remarks: '',
-    },
-  ]
-  return [...base, ...contextual]
-}
 
 const incidentGroupApprovals = (incidents) => incidents.flatMap((incident) => {
   const approval = incident.groupApproval
@@ -110,7 +37,7 @@ const statusClass = (status) => ({ Pending: 'approval-badge-pending', Approved: 
 const priorityClass = (priority) => ({ Critical: 'priority-critical', High: 'priority-high', Normal: 'priority-normal', Low: 'priority-low' }[priority] || '')
 
 export default function ApprovalCenterPage({ currentUser, view, users = [], incidents = [], knowledgeDocuments = [], onResolveGroupApproval, onOpenIncident }) {
-  const allApprovals = useMemo(() => [...incidentGroupApprovals(incidents), ...seedApprovals(currentUser, users, incidents, knowledgeDocuments)], [currentUser, users, incidents, knowledgeDocuments])
+  const allApprovals = useMemo(() => incidentGroupApprovals(incidents), [incidents])
   const [selected, setSelected] = useState(null)
   const [decisionRequest, setDecisionRequest] = useState(null)
   const [search, setSearch] = useState('')

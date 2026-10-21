@@ -39,7 +39,7 @@ const queryNumber = (queries, customer) => {
 function Field({ label, required, children }) { return <label className="incident-field"><span>{required && <em>*</em>}{label}</span>{children}</label> }
 function FormSection({ icon: Icon, title, children }) { return <section className="incident-form-section"><h2><span><Icon size={16} /> {title}</span></h2><div className="incident-form-grid">{children}</div></section> }
 
-export default function QueryManagementPage({ queries, setQueries, currentUser, users, customers, contracts, assignmentGroups, initialQueryId = '', onCreateAssignmentNotifications, canDelete = false }) {
+export default function QueryManagementPage({ queries, setQueries, currentUser, users, customers, contracts, assignmentGroups, initialQueryId = '', onCreateAssignmentNotifications, canCreate = false, canDelete = false }) {
   const [selectedQuery, setSelectedQuery] = useState(null)
   const [creating, setCreating] = useState(false)
   const [scope, setScope] = useState('All')
@@ -108,7 +108,7 @@ export default function QueryManagementPage({ queries, setQueries, currentUser, 
     <div className="incident-list-head">
       <div className="incident-list-title"><h1>Query Management</h1></div>
       <div className="user-list-actions">
-        {isCsm && <button className="incident-create-button" onClick={() => setCreating(true)}><Plus size={15} /> New query</button>}
+        {canCreate && <button className="incident-create-button" onClick={() => setCreating(true)}><Plus size={15} /> New query</button>}
         <button type="button" className="compact-button secondary" disabled={!visibleQueries.length} onClick={extractFilteredQueries}><Download size={15} /> Extract data</button>
         <div className="incident-column-menu">
           <button type="button" className="icon-button" title="Select list columns" aria-label="Select list columns" onClick={() => setColumnPickerOpen((open) => !open)}><Settings size={16} /></button>
@@ -136,7 +136,11 @@ function QueryCreateForm({ customers, contracts, assignmentGroups, onCancel, onS
     const required = ['customer', 'contract', 'requestor', 'queryType', 'description']
     if (form.queryType === 'Others') required.push('temporaryQueryCategory')
     if (required.some((key) => !form[key].trim())) { setError('Complete all required fields before submitting the query.'); return }
-    await onSubmit(form)
+    try {
+      await onSubmit(form)
+    } catch (submissionError) {
+      setError(submissionError.message || 'Unable to submit the query.')
+    }
   }
   return <form className="incident-create-page" noValidate onSubmit={submit}>
     <header className="incident-form-header"><div><button type="button" className="incident-back-button" onClick={onCancel}><ArrowLeft size={15} /> Query Management</button><h1>New Customer Query</h1><p>Register a customer request for assignment and response.</p></div><div className="incident-form-actions"><button type="button" className="incident-cancel-button" onClick={onCancel}>Cancel</button><button type="submit" className="incident-submit-button">Submit query</button></div></header>
@@ -169,10 +173,13 @@ function QueryDetail({ query, currentUser, users, assignmentGroups, isCsm, onBac
   const assignedToOptions = group ? users.filter((user) => group.memberIds?.some((id) => String(id) === String(user.id))).map((user) => user.name) : []
   const canChangeAssignment = draft.status !== 'Closed' && (isCsm || isGroupMember(group, currentUser, users))
   const canAddWorkNotes = draft.status !== 'Closed' && (isCsm || isGroupMember(group, currentUser, users))
+  const canEditFinalResponse = isCsm && draft.status !== 'Closed'
   const canSetPending = isRespondingTeamMember && ['In-Progress', 'Pending'].includes(draft.status)
   const canReturnToCsm = isRespondingTeamMember && ['In-Progress', 'Pending'].includes(draft.status)
+  const assignmentReadOnly = !canChangeAssignment || ((draft.status === 'CSM Review' || statusSelection === 'CSM Review') && !isCsm)
   const activeIndex = Math.max(statuses.indexOf(draft.status), 0)
-  const hasProgressChanges = Boolean(draft.workNotes?.trim()) || statusSelection !== savedDraft.status || ['assignmentGroup', 'assignedTo', 'pendingReason', 'responseToQuery'].some((field) => (draft[field] || '') !== (savedDraft[field] || ''))
+  const attachmentsChanged = JSON.stringify(draft.attachments || []) !== JSON.stringify(savedDraft.attachments || [])
+  const hasProgressChanges = Boolean(draft.workNotes?.trim()) || statusSelection !== savedDraft.status || attachmentsChanged || ['assignmentGroup', 'assignedTo', 'pendingReason'].some((field) => (draft[field] || '') !== (savedDraft[field] || '')) || (canEditFinalResponse && draft.responseToQuery !== savedResponse)
   assignmentGroups = assignmentGroups.filter((group) => !['System Administration', 'Admin Team'].includes(group.name))
   const save = async (changes, action) => {
     if (action === 'close' && !draft.responseToQuery?.trim()) return
@@ -205,7 +212,9 @@ function QueryDetail({ query, currentUser, users, assignmentGroups, isCsm, onBac
       setSavedDraft(next)
       setStatusSelection(next.status)
       setSavedResponse(next.responseToQuery || '')
-      if (['assign', 'returnToCsm', 'saveAll'].includes(action) && updates.assignmentGroup && updates.assignmentGroup !== draft.assignmentGroup) onCreateAssignmentNotifications?.(next, updates.assignmentGroup)
+      const assignmentChanged = updates.assignmentGroup !== undefined && updates.assignmentGroup !== draft.assignmentGroup
+        || updates.assignedTo !== undefined && updates.assignedTo !== draft.assignedTo
+      if (['assign', 'returnToCsm', 'saveAll'].includes(action) && updates.assignmentGroup && assignmentChanged) onCreateAssignmentNotifications?.(next, updates.assignmentGroup)
     } catch (error) {
       setSaveError(error.message || 'The query could not be saved. Please try again.')
     } finally {
@@ -222,7 +231,8 @@ function QueryDetail({ query, currentUser, users, assignmentGroups, isCsm, onBac
     const routedAssignmentGroup = sendForReview ? csmGroupName : nextAssignmentGroup
     const routedAssignedTo = sendForReview ? '' : nextAssignedTo
     const auditChanges = [
-      ...(draft.responseToQuery !== savedResponse ? [{ field: 'Final response to query', previous: savedResponse || '--', next: draft.responseToQuery || '--' }] : []),
+      ...(canEditFinalResponse && draft.responseToQuery !== savedResponse ? [{ field: 'Final response to query', previous: savedResponse || '--', next: draft.responseToQuery || '--' }] : []),
+      ...(attachmentsChanged ? [{ field: 'Attachments', previous: `${(savedDraft.attachments || []).length} file(s)`, next: `${(draft.attachments || []).length} file(s)` }] : []),
       ...(draft.workNotes?.trim() ? [{ field: 'Work notes', previous: '', next: draft.workNotes.trim() }] : []),
       ...(draft.status !== nextStatus ? [{ field: 'Status', previous: draft.status, next: nextStatus }] : []),
       ...(savedDraft.assignmentGroup !== routedAssignmentGroup ? [{ field: 'Assignment Group', previous: savedDraft.assignmentGroup || '--', next: routedAssignmentGroup || '--' }] : []),
@@ -230,7 +240,7 @@ function QueryDetail({ query, currentUser, users, assignmentGroups, isCsm, onBac
       ...(nextStatus === 'Pending' && draft.pendingReason?.trim() ? [{ field: 'Pending reason', previous: query.pendingReason || '--', next: draft.pendingReason.trim() }] : []),
     ]
     if (!auditChanges.length) return
-    await save({ status: nextStatus, assignmentGroup: routedAssignmentGroup, assignedTo: routedAssignedTo, workNotes: '', pendingReason: draft.pendingReason || '', responseToQuery: draft.responseToQuery || '', auditChanges }, 'saveAll')
+    await save({ status: nextStatus, assignmentGroup: routedAssignmentGroup, assignedTo: routedAssignedTo, workNotes: '', pendingReason: draft.pendingReason || '', attachments: draft.attachments || [], responseToQuery: canEditFinalResponse ? draft.responseToQuery || '' : savedResponse, auditChanges }, 'saveAll')
   }
   const closeQuery = () => {
     if (!draft.responseToQuery?.trim()) {
@@ -244,8 +254,8 @@ function QueryDetail({ query, currentUser, users, assignmentGroups, isCsm, onBac
     <ol className="incident-lifecycle compact" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>{statuses.map((status, index) => <li key={status} className={index < activeIndex ? 'completed' : index === activeIndex ? 'current' : ''}><span>{index + 1}</span><strong>{status}</strong></li>)}</ol>
     <section className="incident-form-sheet">
       <FormSection icon={UserRound} title="Customer query"><Field label="Customer"><input value={draft.customer} readOnly /></Field><Field label="Contract"><input value={draft.contract} readOnly /></Field><Field label="Requester"><input value={draft.requestor} readOnly /></Field><Field label="Status">{(isCsm || isRespondingTeamMember) && draft.status !== 'Closed' ? <select value={statusSelection} onChange={(event) => setStatusSelection(event.target.value)}>{(isCsm ? statuses : ['In-Progress', 'Pending', 'CSM Review']).filter((status) => status !== 'Closed').map((status) => <option key={status}>{status}</option>)}</select> : <input value={draft.status} readOnly />}</Field><Field label="Query type"><input value={draft.queryType === 'Others' ? draft.temporaryQueryCategory : draft.queryType} readOnly /></Field></FormSection>
-      {canChangeAssignment && <FormSection icon={UserRound} title="Assignment"><Field label="Assignment Group" required><select value={draft.assignmentGroup} onChange={(event) => setDraft((current) => ({ ...current, assignmentGroup: event.target.value, assignedTo: '' }))}><option value="">-- Select assignment group --</option>{assignmentGroups.filter((entry) => entry.active).map((entry) => <option key={entry.id}>{entry.name}</option>)}</select></Field><Field label="Assigned To"><select value={draft.assignedTo} disabled={!draft.assignmentGroup} onChange={(event) => setDraft((current) => ({ ...current, assignedTo: event.target.value }))}><option value="">-- Select group member --</option>{assignedToOptions.map((name) => <option key={name}>{name}</option>)}</select></Field></FormSection>}
-      <section className="incident-description-section"><h2>Description / Query Details</h2><Field label="Query details"><textarea value={draft.description} readOnly rows="4" /></Field><Field label="Final response to query"><textarea value={draft.responseToQuery || ''} readOnly={!canAddWorkNotes} onChange={(event) => setDraft((current) => ({ ...current, responseToQuery: event.target.value }))} rows="4" placeholder="Enter the final response to the customer query" /></Field></section>
+      <FormSection icon={UserRound} title="Assignment"><Field label="Assignment Group" required>{assignmentReadOnly ? <input value={draft.assignmentGroup || '--'} readOnly /> : <select value={draft.assignmentGroup} onChange={(event) => setDraft((current) => ({ ...current, assignmentGroup: event.target.value, assignedTo: '' }))}><option value="">-- Select assignment group --</option>{assignmentGroups.filter((entry) => entry.active).map((entry) => <option key={entry.id}>{entry.name}</option>)}</select>}</Field><Field label="Assigned To">{assignmentReadOnly ? <input value={draft.assignedTo || '--'} readOnly /> : <select value={draft.assignedTo} disabled={!draft.assignmentGroup} onChange={(event) => setDraft((current) => ({ ...current, assignedTo: event.target.value }))}><option value="">-- Select group member --</option>{assignedToOptions.map((name) => <option key={name}>{name}</option>)}</select>}</Field></FormSection>
+      <section className="incident-description-section"><h2>Description / Query Details</h2><Field label="Query details"><textarea value={draft.description} readOnly rows="4" /></Field><Field label="Final response to query"><textarea value={draft.responseToQuery || ''} readOnly={!canEditFinalResponse} onChange={(event) => setDraft((current) => ({ ...current, responseToQuery: event.target.value }))} rows="4" placeholder="Enter the final response to the customer query" /></Field>{canAddWorkNotes && <AttachmentSection attachments={draft.attachments || []} onChange={(attachments) => setDraft((current) => ({ ...current, attachments }))} />}</section>
       <section className="incident-description-section"><h2>Work notes</h2>{canAddWorkNotes ? <><Field label="Work notes"><textarea value={draft.workNotes || ''} onChange={(event) => setDraft((current) => ({ ...current, workNotes: event.target.value }))} rows="4" placeholder="Add work notes" /></Field>{statusSelection === 'Pending' && <Field label="Pending reason" required><textarea value={draft.pendingReason || ''} onChange={(event) => setDraft((current) => ({ ...current, pendingReason: event.target.value }))} rows="2" placeholder="Explain why the response is pending" /></Field>}</> : <div className="incident-auto-field">{draft.status === 'Closed' ? 'This query is closed.' : 'Work notes can be added by the assigned group.'}</div>}</section>
       <section className="incident-description-section"><details className="record-journal-details"><summary>Record journal</summary>{draft.auditLog?.length ? <ol className="incident-journal">{uniqueJournalEntries(draft.auditLog).slice().reverse().map((entry) => <li key={entry.id}><article><header><div><strong>{entry.updatedBy || 'System'}</strong><span>Updated query</span></div><time>{dateLabel(entry.updatedAt)}</time></header><dl>{(entry.changes || []).map((change, index) => <div key={index}><dt>{change.field}</dt><dd><s>{String(change.previous || '--')}</s><i>to</i><b>{String(change.next || '--')}</b></dd></div>)}</dl></article></li>)}</ol> : <div className="incident-auto-field">No journal entries recorded.</div>}</details></section>
     </section>

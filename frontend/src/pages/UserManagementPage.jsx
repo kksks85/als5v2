@@ -64,7 +64,7 @@ const extractColumns = [
 
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
 
-export default function UserManagementPage({ assignmentGroups, users, setUsers }) {
+export default function UserManagementPage({ assignmentGroups, setAssignmentGroups, users, setUsers }) {
   const [search, setSearch] = useState('')
   const [visibleColumns, setVisibleColumns] = useState(columns.map(({ key }) => key))
   const [showColumns, setShowColumns] = useState(false)
@@ -120,6 +120,15 @@ export default function UserManagementPage({ assignmentGroups, users, setUsers }
     if (window.confirm('Delete this user? This action cannot be undone.')) setUsers((current) => current.filter((user) => user.id !== id))
   }
 
+  const synchronizeUserAssignmentGroup = (userId, groupName) => {
+    setAssignmentGroups((currentGroups) => currentGroups.map((group) => {
+      const memberIds = (group.memberIds || []).filter((memberId) => String(memberId) !== String(userId))
+      return group.name === groupName
+        ? { ...group, memberIds: [...memberIds, userId], members: memberIds.length + 1 }
+        : { ...group, memberIds, members: memberIds.length }
+    }))
+  }
+
   const resetPassword = async (user) => {
     try {
       const result = await authenticationApi.resetUserPassword(user.username || user.email)
@@ -134,8 +143,11 @@ export default function UserManagementPage({ assignmentGroups, users, setUsers }
     if (!newUser.name.trim() || !newUser.username.trim() || !newUser.email.trim()) return
     if (editingUserId) {
       setUsers((current) => current.map((user) => user.id === editingUserId ? { ...user, name: newUser.name.trim(), username: newUser.username.trim(), employeeId: newUser.employeeId.trim(), email: newUser.email.trim(), jobTitle: newUser.jobTitle.trim(), phone: newUser.phone.trim(), role: newUser.role, groups: newUser.groups || '--', status: newUser.status } : user))
+      synchronizeUserAssignmentGroup(editingUserId, newUser.groups)
     } else {
-      setUsers((current) => [...current, { id: Math.max(0, ...current.map((user) => user.id)) + 1, ...newUser, name: newUser.name.trim(), username: newUser.username.trim(), employeeId: newUser.employeeId.trim(), email: newUser.email.trim(), jobTitle: newUser.jobTitle.trim(), phone: newUser.phone.trim(), groups: newUser.groups || '--', provider: 'Local password', lastLogin: 'Not signed in', created: '22 Jul 2026' }])
+      const userId = Math.max(0, ...users.map((user) => Number(user.id) || 0)) + 1
+      setUsers((current) => [...current, { id: userId, ...newUser, name: newUser.name.trim(), username: newUser.username.trim(), employeeId: newUser.employeeId.trim(), email: newUser.email.trim(), jobTitle: newUser.jobTitle.trim(), phone: newUser.phone.trim(), groups: newUser.groups || '--', provider: 'Local password', lastLogin: 'Not signed in', created: '22 Jul 2026' }])
+      synchronizeUserAssignmentGroup(userId, newUser.groups)
     }
     setNewUser({ name: '', username: '', employeeId: '', email: '', jobTitle: '', phone: '', role: 'Service coordinator', groups: '', status: 'Active' })
     setEditingUserId(null)

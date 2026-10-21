@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuthenticationSettings, RoleMapping, UserRecord, UserSession
+from app.models import AssignmentGroupRecord, AuthenticationSettings, RoleMapping, UserRecord, UserSession
 from app.services.authentication import AuthenticationError, AuthorizationService, DEFAULT_USER_PASSWORD, DirectoryProfile, SessionManager, audit, authenticate_enterprise, auth_metadata, find_local_user, hash_password, issue_demo_session, local_profile, normalize_username, settings_for, verify_password
 
 router = APIRouter(prefix="/authentication", tags=["authentication"])
@@ -104,6 +104,30 @@ def require_administrator(claims: dict = Depends(require_session)) -> None:
         AuthorizationService().require_any_role(claims, {"Administrator"})
     except AuthenticationError as error:
         raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message}) from error
+
+
+def require_administrator_or_csm_member(claims: dict = Depends(require_session), database: Session = Depends(get_db)) -> None:
+    if "Administrator" in claims.get("roles", []):
+        return
+    user = find_local_user(database, claims["sub"])
+    if not user:
+        raise HTTPException(status_code=403, detail="The signed-in user is not configured.")
+    identifiers = {
+        str(value) for value in (
+            user.record_id,
+            user.payload.get("id"),
+            user.payload.get("name"),
+            user.payload.get("email"),
+            user.payload.get("username"),
+        ) if value not in {None, ""}
+    }
+    for group in database.scalars(select(AssignmentGroupRecord)).all():
+        payload = group.payload
+        if payload.get("name") != "Customer Support Management Group":
+            continue
+        if str(payload.get("manager", "")) in identifiers or any(str(member_id) in identifiers for member_id in payload.get("memberIds", [])):
+            return
+    raise HTTPException(status_code=403, detail="Administrator or Customer Support Management Group access is required.")
 
 
 @router.post("/login")

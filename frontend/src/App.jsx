@@ -202,10 +202,11 @@ const queryAssignmentGroupNotifications = (query, assignmentGroup, groups, users
   const group = groups.find((entry) => entry.active && entry.name === assignmentGroup)
   const createdAt = new Date().toISOString()
   const memberIds = new Set((group?.memberIds || []).map(String))
-  return users
+  const assignmentKey = `${assignmentGroup || 'unassigned'}-${query.assignedTo || 'unassigned'}`
+  const groupNotifications = users
     .filter((user) => user.status === 'Active' && memberIds.has(String(user.id)))
     .map((user) => ({
-      id: `query-assignment-${query.id}-${assignmentGroup}-${user.id}-${Date.now()}`,
+      id: `query-assignment-group-${query.id}-${assignmentKey}-${user.id}`,
       type: 'query-assignment',
       title: 'Customer query assigned to your group',
       queryId: query.id,
@@ -216,6 +217,23 @@ const queryAssignmentGroupNotifications = (query, assignmentGroup, groups, users
       readByUserIds: [],
       createdAt,
     }))
+  const assignee = String(query.assignedTo || '').trim().toLowerCase()
+  const assigneeNotifications = assignee ? users
+    .filter((user) => user.status === 'Active' && [user.id, user.name, user.email].some((value) => String(value || '').trim().toLowerCase() === assignee))
+    .map((user) => ({
+      id: `query-assignment-assignee-${query.id}-${assignmentKey}-${user.id}`,
+      type: 'query-assignment',
+      title: 'Customer query assigned to you',
+      queryId: query.id,
+      assignmentGroup,
+      assignedTo: query.assignedTo,
+      workNotes: `${query.id} has been assigned to you${assignmentGroup ? ` in ${assignmentGroup}` : ''}.`,
+      recipientUserId: user.id,
+      recipientName: user.name,
+      readByUserIds: [],
+      createdAt,
+    })) : []
+  return [...groupNotifications, ...assigneeNotifications]
 }
 
 const reseedCustomerContacts = (customers) => {
@@ -311,7 +329,7 @@ function LoginPage({ onLogin }) {
     try {
       const session = await authenticationApi.login({ username, password })
       const sessionUser = session.user || {}
-      onLogin({ name: sessionUser.display_name || username, email: sessionUser.email || username, role: sessionUser.roles?.includes('Administrator') ? 'Administrator' : 'Service engineer', session })
+      onLogin({ name: sessionUser.display_name || username, email: sessionUser.email || username, role: sessionUser.roles?.[0] || 'Service engineer', session })
     } catch (error) {
       setLoginError(error.message || 'Sign-in failed.')
     } finally {
@@ -1179,13 +1197,12 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const currentUserGroupNames = assignmentGroups
     .filter((group) => group.manager === user.name || group.memberIds?.includes(currentUserRecord.id))
     .map((group) => group.name)
-  const canCreateIncidents = isAdministrator
-    || currentUserGroupNames.includes('Customer Support Management Group')
   const isCustomerSupportManagementMember = currentUserGroupNames.includes('Customer Support Management Group')
-  const canManageCustomersAndContracts = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Admin Team')
-  const hasWarrantyQualityClaimsAccess = isAdministrator || isCustomerSupportManagementMember || currentUserGroupNames.includes('Advisory Group')
   const hasFullWorkspaceAccess = isAdministrator || isCustomerSupportManagementMember
-  const canViewCsmReports = isAdministrator || isCustomerSupportManagementMember
+  const canCreateIncidents = hasFullWorkspaceAccess
+  const canManageCustomersAndContracts = hasFullWorkspaceAccess || currentUserGroupNames.includes('Admin Team')
+  const hasWarrantyQualityClaimsAccess = hasFullWorkspaceAccess
+  const canViewCsmReports = hasFullWorkspaceAccess
   const dashboardReports = useMemo(() => reports.filter((report) => (report.csmOnly && canViewCsmReports)
     || (!report.csmOnly && (report.createdBy === user.email || report.sharedWith?.includes(user.role) || report.sharedWith?.includes(user.name)))), [canViewCsmReports, reports, user.email, user.name, user.role])
   useEffect(() => {
@@ -1240,7 +1257,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
   const renderPage = () => {
     if (activePage.startsWith('Product category:')) {
       const category = activePage.slice('Product category:'.length)
-      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
+      return <ProductCategoryPage key={`${category}-${productAssetDrill?.navigationId || ''}`} category={category} assets={productAssets} products={categoryProducts} contracts={contracts} currentUser={user} canManageInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} selectedCustomer={selectedCustomer} initialSerialNumbers={productAssetDrill?.category === category ? productAssetDrill.serialNumbers : []} onUpdateAsset={(asset) => setProductAssets((current) => current.map((entry) => entry.id === asset.id ? asset : entry))} onDeleteAsset={(id) => setProductAssets((current) => current.filter((entry) => entry.id !== id))} />
     }
     switch (activePage) {
       case 'Overview': return <OverviewPage user={user} reports={dashboardReports} layout={dashboardLayout} data={applicationData} selectedCustomer={selectedCustomer} showCsmTiles={isCustomerSupportManagementMember} onAddReport={addReportToDashboard} onLayoutChange={setDashboardLayout} onRemoveReport={removeReportFromDashboard} onNavigate={setActivePage} onCreateIncident={canCreateIncidents ? () => { setIncidentDrill({ createIncident: true, navigationId: Date.now() }); setActivePage('Incidents') } : undefined} onOpenReport={(id) => { setNlpReportDefinition(null); setDrillReportId(id); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenNlpReport={(definition) => { setDrillReportId(null); setNlpReportDefinition(definition); setReportingVisit((v) => v + 1); setActivePage('Reporting') }} onOpenIncidents={(drill) => { setIncidentDrill(drill); setActivePage('Incidents') }} onOpenRecords={({ source, recordIds }) => {
@@ -1248,25 +1265,25 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         if (source.startsWith('Product category: ')) { const category = source.slice('Product category: '.length); setProductAssetDrill({ category, serialNumbers: recordIds }); setActivePage(`Product category:${category}`) }
       }} />
       case 'Incidents': return <IncidentsPage key={incidentDrill?.navigationId || 'default'} currentUser={user} assignmentGroups={assignmentGroups} users={users} customers={customers} contracts={contracts} repairExecutions={repairExecutions} processes={processes} products={categoryProducts} productAssets={productAssets} incidents={incidents} setIncidents={setIncidents} setProducts={setProducts} onAddCustomerContact={addCustomerContact} onCreateNotifications={createNotifications} onCreateAssignmentNotifications={createAssignmentNotifications} onEditModeChange={setIncidentEditMode} initialDrill={incidentDrill} savedQueries={savedIncidentQueries} onSaveQuery={(query) => setSavedIncidentQueries((current) => { const next = [...current.filter((entry) => entry.name !== query.name), query]; localStorage.setItem('als50-saved-incident-queries', JSON.stringify(next)); return next })} canCreateIncidents={canCreateIncidents} canDelete={isAdministrator} />
-      case 'Query Management': return <QueryManagementPage key={queryDrillId || 'default'} queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} initialQueryId={queryDrillId} onCreateAssignmentNotifications={createQueryAssignmentNotifications} canDelete={isAdministrator} />
-      case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} contracts={contracts} incidents={incidents} productCategories={productCategories} currentUser={user} onAddCustomerContact={addCustomerContact} canDelete={isAdministrator} />
+      case 'Query Management': return <QueryManagementPage key={queryDrillId || 'default'} queries={queries} setQueries={setQueries} currentUser={user} users={users} customers={customers} contracts={contracts} assignmentGroups={assignmentGroups} initialQueryId={queryDrillId} onCreateAssignmentNotifications={createQueryAssignmentNotifications} canCreate={canCreateIncidents} canDelete={isAdministrator} />
+      case 'Warranty / Quality Claims': return <WarrantyQualityClaimsPage claims={warrantyQualityClaims} setClaims={setWarrantyQualityClaims} customers={customers} contracts={contracts} incidents={incidents} productCategories={productCategories} currentUser={user} onAddCustomerContact={addCustomerContact} canCreate={hasWarrantyQualityClaimsAccess} canDelete={isAdministrator} />
       case 'Customers': return <CustomersPage customers={customers} setCustomers={setCustomers} onCustomerRenamed={renameCustomerReferences} canManageCustomersAndContracts={canManageCustomersAndContracts} />
-      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} customSpareCategories={contractSpareCategories} canManageSpareCategories={isAdministrator} onSaveSpareCategories={saveContractSpareCategories} onSaveContract={saveContract} onDeleteContract={deleteContract} canManageCustomersAndContracts={canManageCustomersAndContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
+      case 'Contracts': return <ContractsPage contracts={contracts} setContracts={setContracts} customSpareCategories={contractSpareCategories} canManageSpareCategories={hasFullWorkspaceAccess} onSaveSpareCategories={saveContractSpareCategories} onSaveContract={saveContract} onDeleteContract={deleteContract} canManageCustomersAndContracts={canManageCustomersAndContracts} onCreateSubcontract={(contractNumber) => { setPendingSubcontractContract(contractNumber); setActivePage('Sub-contracts') }} />
       case 'Sub-contracts': return <SubcontractsPage subcontracts={subcontracts} setSubcontracts={setSubcontracts} contracts={contracts} onCreateNotifications={createNotifications} initialMainContract={pendingSubcontractContract} onInitialMainContractHandled={() => setPendingSubcontractContract('')} />
-      case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
-      case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
-      case 'Product master GDT': return <ProductMasterGdtPage records={gdtProducts} setRecords={setGdtProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} />
-      case 'Product master MAST': return <ProductMasterGdtPage records={mastProducts} setRecords={setMastProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="MAST" idPrefix="mast" />
-      case 'Product master Simulator': return <ProductMasterGdtPage records={simulatorProducts} setRecords={setSimulatorProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Simulator" idPrefix="simulator" columns={simulatorProductColumns} />
-      case 'Product master TMV': return <ProductMasterGdtPage records={tmvProducts} setRecords={setTmvProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="TMV" idPrefix="tmv" columns={tmvProductColumns} />
-      case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
-      case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
-      case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
-      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={isAdministrator} canImportInventory={isAdministrator} allowManualEntry={isAdministrator} manualEntryLabel="Manual MRLS entry" masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
-        case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} />
-      case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={isAdministrator} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
-      case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
-      case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} canManageInventory={isAdministrator} canImportInventory={hasFullWorkspaceAccess} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
+      case 'Product master': return <ProductMasterPage products={products} setProducts={setProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} />
+      case 'Product master MCS': return <ProductMasterMcsPage records={mcsProducts} setRecords={setMcsProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} />
+      case 'Product master GDT': return <ProductMasterGdtPage records={gdtProducts} setRecords={setGdtProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} />
+      case 'Product master MAST': return <ProductMasterGdtPage records={mastProducts} setRecords={setMastProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="MAST" idPrefix="mast" />
+      case 'Product master Simulator': return <ProductMasterGdtPage records={simulatorProducts} setRecords={setSimulatorProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="Simulator" idPrefix="simulator" columns={simulatorProductColumns} />
+      case 'Product master TMV': return <ProductMasterGdtPage records={tmvProducts} setRecords={setTmvProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="TMV" idPrefix="tmv" columns={tmvProductColumns} />
+      case 'Product master Batteries': return <ProductMasterGdtPage records={batteryProducts} setRecords={setBatteryProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="Batteries" idPrefix="batteries" columns={batteryProductColumns} />
+      case 'Product master Warhead / SAM': return <ProductMasterGdtPage records={warheadSamProducts} setRecords={setWarheadSamProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="Warhead / SAM" idPrefix="warhead-sam" columns={warheadSamProductColumns} />
+      case 'Product master Tools': return <ProductMasterGdtPage records={toolsProducts} setRecords={setToolsProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="Tools" idPrefix="tools" columns={toolsProductColumns} />
+      case 'Product master MRLS': return <ProductMasterGdtPage records={mrlsProducts} setRecords={setMrlsProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} allowManualEntry={hasFullWorkspaceAccess} manualEntryLabel="Manual MRLS entry" masterName="MRLS" idPrefix="mrls" columns={mrlsProductColumns} />
+        case 'Component lifecycle': return <ComponentLifecyclePage currentUser={user} canManageInventory={hasFullWorkspaceAccess} />
+      case 'Component repairs': return <ComponentLifecyclePage currentUser={user} canManageInventory={hasFullWorkspaceAccess} initialTab="repairs" repairOnly onOpenIncident={(incidentId) => { setIncidentDrill({ incidentIds: [incidentId], selectedIncidentId: incidentId, navigationId: Date.now() }); setActivePage('Incidents') }} />
+      case 'Product master SME / STE': return <ProductMasterGdtPage records={smeSteProducts} setRecords={setSmeSteProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="SME / STE" idPrefix="sme-ste" columns={smeSteProductColumns} />
+      case 'Product master GSE': return <ProductMasterGdtPage records={gseProducts} setRecords={setGseProducts} canManageInventory={hasFullWorkspaceAccess} canImportInventory={hasFullWorkspaceAccess} canDelete={isAdministrator} masterName="GSE" idPrefix="gse" columns={gseProductColumns} />
       case 'Knowledge management': return <KnowledgeManagementPage documents={knowledgeDocuments} setDocuments={setKnowledgeDocuments} canDelete={isAdministrator} canRetire={isAdministrator || isCustomerSupportManagementMember} />
       case 'Mail correspondence': return <MailCorrespondencePage correspondence={mailCorrespondence} setCorrespondence={setMailCorrespondence} users={users} currentUser={user} />
       case 'My Calendar': return <MyCalendarPage
@@ -1276,7 +1293,7 @@ function Dashboard({ user, onLogout, canImpersonate, impersonatingUser, onImpers
         currentUser={currentUserRecord}
       />
       case 'Reporting': return <ReportingPage key={reportingVisit} user={user} data={applicationData} reports={reports} canViewCsmReports={canViewCsmReports} initialReportId={drillReportId} initialReportDefinition={nlpReportDefinition} onSaveReport={(definition) => saveReport(definition)} onShareReport={(definition, audience) => saveReport(definition, [audience])} />
-      case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} users={users} setUsers={setUsers} />
+      case 'User management': return <UserManagementPage assignmentGroups={assignmentGroups} setAssignmentGroups={setAssignmentGroups} users={users} setUsers={setUsers} />
       case 'Assignment groups': return <AssignmentGroupsPage groups={assignmentGroups} setGroups={setAssignmentGroups} users={users} onGroupRenamed={renameAssignmentGroupReferences} />
       case 'Repair execution': return <RepairExecutionsPage repairExecutions={repairExecutions} setRepairExecutions={setRepairExecutions} onRepairExecutionRenamed={renameRepairExecutionReferences} />
       case 'Approval center: My Current Approvals': return <ApprovalCenterPage view="mine" currentUser={user} users={users} incidents={incidents} knowledgeDocuments={knowledgeDocuments} onResolveGroupApproval={resolveGroupApproval} onOpenIncident={openIncidentFromApproval} />

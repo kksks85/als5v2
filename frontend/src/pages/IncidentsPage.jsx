@@ -495,8 +495,9 @@ export default function IncidentsPage({ currentUser, assignmentGroups, users, cu
       .map((group) => assignmentGroupKey(group.name))
     return [...new Set([...configuredGroups, ...membershipGroups])]
   }, [assignmentGroups, currentUser.email, currentUser.name, currentUserRecord.email, currentUserRecord.id, currentUserRecord.name])
-  const hasFullIncidentAccess = String(currentUserRecord.role || currentUser.role || '').toLowerCase() === 'administrator'
-    || myGroupNames.includes(assignmentGroupKey('Customer Support Management Group'))
+  const currentRole = String(currentUserRecord.role || currentUser.role || '').toLowerCase()
+  const hasFullIncidentAccess = currentRole === 'administrator'
+    || (currentRole === 'manager' && myGroupNames.includes(assignmentGroupKey('Customer Support Management Group')))
   const canEditIncident = (incident) => {
     if (hasFullIncidentAccess) return true
     const assignee = String(incident.assignedTo || incident.assignee || '').toLowerCase()
